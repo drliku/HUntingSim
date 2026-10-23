@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wildwood — Wildlife Hunting Simulator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- ================= HUD ================= -->
+  <div id="hud" class="hidden">
+    <div id="pvp-hud" class="pvp-hud hidden"></div>
+    <div id="pvp-board" class="pvp-board glass hidden"></div>
+    <div id="compass">
+      <div id="compass-window"><div id="compass-strip"></div></div>
+      <div id="compass-needle"></div>
+      <div id="compass-deg">000°</div>
+    </div>
+
+    <div id="status" class="glass">
+      <div class="st-row"><span id="hud-time" class="big">07:12</span><span id="hud-day" class="muted">Day 1</span></div>
+      <div class="st-row"><span id="hud-weather">Clear</span></div>
+      <div class="st-row wind"><span id="wind-arrow" class="wind-arrow">&#x2191;</span><span id="hud-wind">Wind 2 m/s</span></div>
+    </div>
+
+    <div id="minimap" title="Click to open the full map (M)">
+      <canvas id="minimap-canvas" width="176" height="176"></canvas>
+      <span class="mm-north">N</span>
+      <span class="mm-key">M</span>
+    </div>
+    <div id="fps" class="muted"></div>
+    <div id="crosshair"><i></i></div>
+    <div id="hitmarker"></div>
+    <div id="prompt"></div>
+    <div id="track-badge">TRACKING MODE</div>
+
+    <div id="vitals" class="glass">
+      <div class="vital"><label>Health</label><div class="bar"><i id="v-health"></i></div></div>
+      <div class="vital"><label>Food</label><div class="bar"><i id="v-food"></i></div></div>
+      <div class="vital"><label>Rest</label><div class="bar"><i id="v-rest"></i></div></div>
+      <div id="v-status" class="v-status"></div>
+    </div>
+    <div id="dmg-dir"></div>
+
+    <div id="stealth" class="glass">
+      <div id="stance">Standing</div>
+      <div class="meter"><label>Noise</label><div class="bar"><i id="noise-bar"></i></div></div>
+      <div class="meter"><label>Visibility</label><div class="bar"><i id="vis-bar"></i></div></div>
+      <div id="detect"><span class="eye"></span><span id="detect-text">Unseen</span></div>
+    </div>
+
+    <div id="loadout" class="glass">
+      <div id="item-name">Bolt-action rifle · .308</div>
+      <div id="ammo"><span id="ammo-mag">5</span><span class="sep">/</span><span id="ammo-res">25</span></div>
+      <div id="zoom-label"></div>
+      <div id="money" class="money"></div>
+      <div id="slots">
+        <span data-slot="rifle"><b>1</b>Rifle</span>
+        <span data-slot="binoculars"><b>2</b>Binoculars</span>
+        <span data-slot="knife"><b>3</b>Knife</span>
+      </div>
+    </div>
+
+    <div id="stamina"><i id="stamina-bar"></i></div>
+    <div id="toasts"></div>
+    <div id="markers"></div>
+  </div>
+
+  <div id="tired-overlay"></div>
+  <div id="damage-overlay"></div>
+
+  <!-- Optics overlays -->
+  <div id="scope-overlay" class="optic">
+    <svg viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <radialGradient id="lens" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="scale(78)">
+          <stop offset="0.86" stop-color="#000" stop-opacity="0"/>
+          <stop offset="1" stop-color="#000" stop-opacity="0.85"/>
+        </radialGradient>
+        <mask id="scope-hole"><rect x="-500" y="-500" width="1000" height="1000" fill="#fff"/><circle cx="0" cy="0" r="78" fill="#000"/></mask>
+      </defs>
+      <rect x="-500" y="-500" width="1000" height="1000" fill="#050505" mask="url(#scope-hole)"/>
+      <circle cx="0" cy="0" r="78" fill="url(#lens)"/>
+      <g stroke="#0a0a0a" fill="none">
+        <line x1="-78" y1="0" x2="-14" y2="0" stroke-width="2.4"/>
+        <line x1="14" y1="0" x2="78" y2="0" stroke-width="2.4"/>
+        <line x1="0" y1="14" x2="0" y2="78" stroke-width="2.4"/>
+        <line x1="0" y1="-78" x2="0" y2="-14" stroke-width="2.4"/>
+        <line x1="-14" y1="0" x2="14" y2="0" stroke-width="0.35"/>
+        <line x1="0" y1="-14" x2="0" y2="14" stroke-width="0.35"/>
+        <g stroke-width="0.35">
+          <line x1="-2" y1="4" x2="2" y2="4"/><line x1="-1.5" y1="8" x2="1.5" y2="8"/><line x1="-1" y1="12" x2="1" y2="12"/>
+        </g>
+      </g>
+      <circle cx="0" cy="0" r="0.55" fill="#c0392b"/>
+    </svg>
+    <div class="optic-info" id="scope-info"></div>
+  </div>
+
+  <div id="binoc-overlay" class="optic">
+    <svg viewBox="-160 -100 320 200" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <mask id="bino-hole">
+          <rect x="-600" y="-500" width="1200" height="1000" fill="#fff"/>
+          <circle cx="-42" cy="0" r="74" fill="#000"/><circle cx="42" cy="0" r="74" fill="#000"/>
+        </mask>
+        <mask id="bino-inner"><circle cx="-42" cy="0" r="74" fill="#fff"/><circle cx="42" cy="0" r="74" fill="#fff"/></mask>
+        <radialGradient id="bvig" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="scale(118 76)"><stop offset="0.72" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.75"/></radialGradient>
+      </defs>
+      <rect x="-600" y="-500" width="1200" height="1000" fill="#040404" mask="url(#bino-hole)"/>
+      <rect x="-120" y="-80" width="240" height="160" fill="url(#bvig)" mask="url(#bino-inner)"/>
+      <g stroke="rgba(255,255,255,0.55)" stroke-width="0.35" fill="none">
+        <line x1="-10" y1="0" x2="-3" y2="0"/><line x1="3" y1="0" x2="10" y2="0"/>
+        <line x1="0" y1="-10" x2="0" y2="-3"/><line x1="0" y1="3" x2="0" y2="10"/>
+        <circle cx="0" cy="0" r="16" stroke-dasharray="2 3"/>
+      </g>
+    </svg>
+    <div class="bino-hud">
+      <div class="bino-left"><div class="lbl">RANGE</div><div id="bino-range" class="val">— m</div></div>
+      <div class="bino-right"><div class="lbl">BEARING</div><div id="bino-bearing" class="val">000°</div><div class="lbl" style="margin-top:6px">ZOOM</div><div id="bino-zoom" class="val">8×</div></div>
+      <div id="bino-id" class="bino-id"></div>
+    </div>
+  </div>
+
+  <div id="track-panel" class="glass hidden">
+    <div class="tp-head"><span id="tp-kind">Footprint</span><span id="tp-close" class="muted">Auto-follow on</span></div>
+    <div id="tp-species" class="tp-species"></div>
+    <div id="tp-sci" class="tp-sci"></div>
+    <div class="tp-grid">
+      <div><label>Direction</label><span id="tp-dir"></span></div>
+      <div><label>Freshness</label><span id="tp-fresh"></span></div>
+      <div><label>Gait</label><span id="tp-gait"></span></div>
+      <div><label>Print size</label><span id="tp-size"></span></div>
+    </div>
+    <div id="tp-note" class="tp-note"></div>
+    <div class="tp-foot">Highlighted prints mark this animal's trail. Press <b>T</b> for tracking mode · <b>F</b> Field Guide</div>
+  </div>
+
+  <!-- ================= Screens ================= -->
+  <div id="loading" class="screen">
+    <div class="brand"><div class="logo-mark"></div><h1>WILDWOOD</h1><p>Wildlife Hunting Simulator</p></div>
+    <div class="load-bar"><i id="load-fill"></i></div>
+    <div id="load-text" class="muted">Preparing the wilderness…</div>
+  </div>
+
+  <div id="mainmenu" class="screen main-menu hidden">
+    <div class="mm-left">
+      <div class="brand mm-brand"><div class="logo-mark"></div><h1>WILDWOOD</h1><p>Wildlife Hunting Simulator</p></div>
+      <nav class="mm-nav">
+        <button id="btn-start" class="mm-item primary"><span>Free roam</span><small>Explore, track and hunt freely</small></button>
+        <button id="btn-survival" class="mm-item"><span>Survival mode</span><small>Start with only a knife and a little money. Stay alive.</small></button>
+        <div id="mm-diff" class="mm-diff hidden">
+          <button class="diff-btn" data-diff="easy"><b>Easy</b><small>Slower hunger, fewer attacks, one poacher, weaker poisons. $150.</small></button>
+          <button class="diff-btn" data-diff="medium"><b>Medium</b><small>The intended experience. $100.</small></button>
+          <button class="diff-btn" data-diff="hard"><b>Hard</b><small>Fast hunger, aggressive predators, three poachers, deadly poisons. $60.</small></button>
+        </div>
+        <button id="btn-pvp" class="mm-item"><span>PvP survival</span><small>Hunt and survive against friends — host a game or join with a code</small></button>
+        <div id="mm-pvp" class="mm-diff hidden">
+          <label class="pvp-row"><span>Your name</span><input id="pvp-name" maxlength="16" placeholder="Hunter" autocomplete="off" /></label>
+          <button class="diff-btn" id="pvp-host"><b>Host a game</b><small>A new forest. You get a 4-letter code to give your friends.</small></button>
+          <div class="pvp-row"><input id="pvp-code" maxlength="4" placeholder="CODE" autocomplete="off" /><button class="btn small primary" id="pvp-join">Join game</button></div>
+          <p class="muted small" id="pvp-status"></p>
+        </div>
+        <button class="mm-item" data-open="journal"><span>Hunting Journal</span><small>Your sightings and harvests</small></button>
+        <button class="mm-item" data-open="guide"><span>Field Guide</span><small id="mm-guide-sub">Species you have recorded</small></button>
+        <button class="mm-item" data-open="settings"><span>Settings</span><small>Mouse, graphics and sound</small></button>
+        <button class="mm-item" data-open="controls"><span>Controls</span><small>Keyboard and mouse</small></button>
+      </nav>
+      <div class="mm-foot muted small">27 North American species · eat, rest and stay safe from poachers · animals hear you moving and smell you downwind</div>
+    </div>
+    <aside class="mm-journal glass">
+      <div class="mm-j-head"><h3>Hunting Journal</h3><button class="btn small" data-open="journal">Open</button></div>
+      <div class="mm-stats" id="mm-stats"></div>
+      <h4>Latest entries</h4>
+      <div class="mm-entries" id="mm-entries"></div>
+    </aside>
+  </div>
+
+  <!-- Pause / settings -->
+  <div id="pause" class="menu hidden">
+    <div class="menu-panel glass narrow">
+      <div class="menu-head"><h2>Paused</h2></div>
+      <div class="pause-buttons">
+        <button class="btn primary" data-action="resume">Resume</button>
+        <button class="btn" data-open="guide">Field Guide <kbd>F</kbd></button>
+        <button class="btn" data-open="journal">Journal <kbd>J</kbd></button>
+        <button class="btn" data-open="map">Map <kbd>M</kbd></button>
+        <button class="btn" data-open="sandbox">Sandbox <kbd>B</kbd></button>
+        <button class="btn" data-open="settings">Settings</button>
+        <button class="btn" data-open="controls">Controls</button>
+        <button class="btn wide" data-action="mainmenu">Main menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div id="settings" class="menu hidden">
+    <div class="menu-panel glass narrow">
+      <div class="menu-head"><h2>Settings</h2><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="settings">
+        <label>Mouse sensitivity <span id="v-sens"></span><input type="range" id="s-sens" min="0.2" max="3" step="0.05" /></label>
+        <label>Field of view <span id="v-fov"></span><input type="range" id="s-fov" min="55" max="95" step="1" /></label>
+        <label>Volume <span id="v-vol"></span><input type="range" id="s-vol" min="0" max="1" step="0.05" /></label>
+        <label class="row">Graphics quality
+          <select id="s-quality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
+        </label>
+        <label class="row check"><input type="checkbox" id="s-invert" /> Invert mouse Y</label>
+        <label class="row check"><input type="checkbox" id="s-bob" /> Head bob</label>
+        <label class="row check"><input type="checkbox" id="s-fps" /> Show FPS</label>
+      </div>
+      <div class="muted small" style="margin-top:12px">Anti-aliasing changes with quality apply after reload.</div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div id="controls" class="menu hidden">
+    <div class="menu-panel glass mid">
+      <div class="menu-head"><h2>Controls</h2><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="keys">
+          <span><kbd>W A S D</kbd>Move</span><span><kbd>Mouse</kbd>Look</span>
+          <span><kbd>Shift</kbd>Sprint / hold breath</span><span><kbd>C</kbd>Crouch</span>
+          <span><kbd>Space</kbd>Jump</span><span><kbd>1–8</kbd>Rifle · shotgun · revolver · bow · knife · binoculars · bait · call</span>
+          <span><kbd>RMB</kbd>Aim / scope / raise binoculars</span><span><kbd>LMB</kbd>Fire · hold to draw the bow · place bait · call</span>
+          <span><kbd>Wheel</kbd>Switch item · zoom while aiming</span><span><kbd>R</kbd>Reload</span>
+          <span><kbd>E</kbd>Inspect tracks or a harvest · ladder · sleep at a cabin door</span><span><kbd>T</kbd>Tracking mode</span>
+          <span><kbd>F</kbd>Field Guide</span><span><kbd>J</kbd>Journal</span>
+          <span><kbd>M</kbd>Map</span><span><kbd>B</kbd>Sandbox</span>
+          <span><kbd>I</kbd>Pack: food &amp; health</span><span><kbd>H</kbd>Hide HUD</span><span><kbd>Esc</kbd>Pause</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Harvest card -->
+  <div id="harvest" class="menu hidden">
+    <div class="menu-panel glass harvest-panel">
+      <div class="menu-head"><div><div class="g-family" id="hv-kicker">Harvest recorded</div><h2 id="hv-name"></h2><div class="g-sci" id="hv-sci"></div></div></div>
+      <div class="harvest-body">
+        <div class="harvest-stage" id="harvest-stage"></div>
+        <div class="harvest-info">
+          <div class="hv-grid" id="hv-grid"></div>
+          <div class="hv-shot" id="hv-shot"></div>
+          <h4>About this species</h4>
+          <ul class="hv-facts" id="hv-facts"></ul>
+        </div>
+      </div>
+      <div class="menu-foot hv-actions">
+        <button class="btn" id="hv-guide">Field Guide</button>
+        <button class="btn" id="hv-continue">Continue</button>
+        <button class="btn primary" id="hv-inspect">Inspect the body</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pack / inventory -->
+  <div id="pack" class="menu hidden">
+    <div class="menu-panel glass narrow">
+      <div class="menu-head"><h2>Your pack</h2><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="pack-vitals" id="pk-vitals"></div>
+      <h4>Meat <span class="muted small" id="pk-load"></span></h4>
+      <div class="meat-list" id="pk-meat"></div>
+      <p class="muted small">Harvest meat from game you take (inspect the animal), light a campfire and cook it. Raw game can make you ill.</p>
+    </div>
+  </div>
+
+  <!-- Campfire -->
+  <div id="campfire" class="menu hidden">
+    <div class="menu-panel glass narrow">
+      <div class="menu-head"><div><div class="g-family" id="cf-kicker">Campfire</div><h2>Cook &amp; eat</h2></div><button class="btn ghost close" data-action="back">✕</button></div>
+      <p class="muted small" id="cf-fuel"></p>
+      <div class="cook-bar hidden" id="cf-progress"><span id="cf-progress-text">Cooking…</span><div class="load-bar"><i id="cf-progress-fill"></i></div></div>
+      <div class="meat-list" id="cf-meat"></div>
+      <div class="menu-foot hv-actions">
+        <button class="btn small" id="cf-douse">Put out the fire</button>
+        <button class="btn" data-action="back">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Store -->
+  <div id="store" class="menu hidden">
+    <div class="menu-panel glass narrow store-panel">
+      <div class="menu-head"><div><div class="g-family" id="st-kicker">Trading post</div><h2 id="st-name">Store</h2></div><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="st-money" id="st-money"></div>
+      <h4>For sale</h4>
+      <div class="meat-list" id="st-items"></div>
+      <div id="st-sell-wrap"><h4>Sell your meat</h4><div class="meat-list" id="st-sell"></div></div>
+      <p class="muted small" id="st-note"></p>
+    </div>
+  </div>
+
+  <!-- Death -->
+  <div id="death" class="screen hidden">
+    <div class="death-card">
+      <div class="death-kicker">You died</div>
+      <h1 id="dt-cause">Killed</h1>
+      <div class="death-stats" id="dt-stats"></div>
+      <p class="muted">Everything starts over from zero: your journal, money and gear are gone.</p>
+      <button class="btn primary" id="dt-restart">Start over</button>
+    </div>
+  </div>
+
+  <!-- Rest / sleep -->
+  <div id="sleep" class="menu hidden">
+    <div class="menu-panel glass narrow">
+      <div class="menu-head"><div><div class="g-family">Rest</div><h2 id="sl-title">Sleep in the cabin</h2></div><button class="btn ghost close" data-action="back">✕</button></div>
+      <p class="muted small" id="sl-now"></p>
+      <button class="btn relax-btn" id="sl-relax">Lie down and relax<small>Rest in bed without sleeping — time passes normally. Press E to get up.</small></button>
+      <div class="sleep-options" id="sl-options"></div>
+      <p class="muted small">Time passes for the forest while you sleep: animals move, tracks age and the weather can change.</p>
+    </div>
+  </div>
+  <div id="sleep-fade" class="hidden">
+    <div class="sf-inner">
+      <div class="sf-title" id="sf-title">Sleeping…</div>
+      <div class="sf-clock" id="sf-clock">00:00</div>
+      <div class="load-bar"><i id="sf-bar"></i></div>
+      <button class="btn primary hidden" id="sf-continue">Continue</button>
+    </div>
+  </div>
+
+  <!-- Carcass inspection -->
+  <div id="inspect" class="menu hidden">
+    <div class="menu-panel glass wide">
+      <div class="menu-head"><div><div class="g-family" id="in-kicker">Inspection</div><h2 id="in-name"></h2><div class="g-sci" id="in-sci"></div></div><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="inspect-body">
+        <div class="inspect-stage" id="inspect-stage"></div>
+        <div class="inspect-info">
+          <h4>Measurements</h4>
+          <div class="hv-grid" id="in-grid"></div>
+          <h4>What to look for</h4>
+          <ul class="hv-facts" id="in-notes"></ul>
+          <div class="hv-shot hidden" id="in-meat-note"></div>
+          <div class="anat-note muted small" id="in-anat"></div>
+        </div>
+      </div>
+      <div class="menu-foot hv-actions">
+        <span class="muted small" style="margin-right:auto">Drag to rotate · Anatomy shows the skeleton, muscles and organs</span>
+        <button class="btn" data-action="back">Close</button>
+        <button class="btn" id="in-meat">Harvest meat</button>
+        <button class="btn primary" id="in-tag">Tag &amp; record</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Field guide -->
+  <div id="guide" class="menu hidden">
+    <div class="menu-panel glass wide">
+      <div class="menu-head"><h2>Field Guide</h2><span class="muted" id="guide-count"></span><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="guide-body">
+        <div class="species-list" id="species-list"></div>
+        <div class="guide-detail" id="guide-detail">
+          <div class="guide-top">
+            <div class="preview-wrap">
+              <div id="guide-stage"></div>
+            </div>
+            <div class="guide-info">
+              <div class="g-family" id="g-family"></div>
+              <h2 id="g-name"></h2>
+              <div class="g-sci" id="g-sci"></div>
+              <div class="g-status" id="g-status"></div>
+              <div class="stat-grid" id="g-stats"></div>
+            </div>
+          </div>
+          <div class="guide-lower">
+            <div><h4>Did you know?</h4><ul id="g-facts"></ul></div>
+            <div><h4>Tracks &amp; sign</h4><p id="g-tracks"></p><h4>Anatomy note</h4><p id="g-anat"></p></div>
+          </div>
+          <div id="guide-locked" class="guide-locked hidden">
+            <div class="lock-icon"></div>
+            <h3>Not yet recorded</h3>
+            <p>Observe this species through binoculars or a scope (hold the view on it for a moment) to add it to your Field Guide.</p>
+          </div>
+        </div>
+      </div>
+      <div class="muted small guide-hint">Drag to rotate · scroll to zoom · click anatomy labels for details</div>
+    </div>
+  </div>
+
+  <!-- Journal -->
+  <div id="journal" class="menu hidden">
+    <div class="menu-panel glass mid">
+      <div class="menu-head"><h2>Hunting Journal</h2><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="journal-stats" id="journal-stats"></div>
+      <div class="journal-list" id="journal-list"></div>
+      <div class="menu-foot"><button class="btn small" id="btn-clear-journal">Clear journal</button></div>
+    </div>
+  </div>
+
+  <!-- Sandbox -->
+  <div id="sandbox" class="menu hidden">
+    <div class="menu-panel glass wide">
+      <div class="menu-head"><h2>Sandbox</h2><span class="muted">Shape the world freely</span><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="sandbox-grid">
+        <section>
+          <h4>Spawn wildlife <span class="muted small">(in front of you)</span></h4>
+          <div class="spawn-grid" id="spawn-grid"></div>
+          <h4>Populations</h4>
+          <div id="pop-sliders" class="settings"></div>
+          <button class="btn small" id="btn-clear-animals">Remove all animals</button>
+        </section>
+        <section>
+          <h4>Weather</h4>
+          <div class="chip-row" id="weather-chips"></div>
+          <h4>Time of day <span id="v-time" class="muted"></span></h4>
+          <input type="range" id="s-time" min="0" max="23.99" step="0.05" />
+          <h4>Time speed</h4>
+          <div class="chip-row" id="speed-chips"></div>
+          <h4>Options</h4>
+          <div class="settings">
+            <label class="row check"><input type="checkbox" id="sb-ammo" /> Infinite ammunition</label>
+            <label class="row check"><input type="checkbox" id="sb-observer" /> Observer mode (animals ignore you)</label>
+            <label class="row check"><input type="checkbox" id="sb-reveal" /> Reveal animals on HUD &amp; map</label>
+            <label class="row check"><input type="checkbox" id="sb-survival" /> Survival needs (hunger &amp; rest)</label>
+            <label class="row check"><input type="checkbox" id="sb-poachers" /> Hostile poachers</label>
+          </div>
+          <div class="chip-row">
+            <button class="btn small" id="btn-refill">Refill ammo</button>
+            <button class="btn small" id="btn-unlock">Unlock Field Guide</button>
+            <button class="btn small" id="btn-heal">Restore health, food &amp; rest</button>
+          </div>
+        </section>
+        <section>
+          <h4>Teleport</h4>
+          <div class="tele-list" id="tele-list"></div>
+          <h4>Find wildlife</h4>
+          <div class="chip-row" id="find-chips"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div id="map" class="menu hidden">
+    <div class="menu-panel glass map-panel">
+      <div class="menu-head"><h2>Map</h2><span class="muted">Click a location to fast-travel</span><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="map-wrap"><canvas id="map-canvas" width="640" height="640"></canvas><div id="map-overlay"></div></div>
+    </div>
+  </div>
+
+  <div id="lock-hint" class="hidden">Click to resume</div>
+  <noscript>This game requires JavaScript.</noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

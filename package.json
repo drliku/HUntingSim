@@ -1,0 +1,12 @@
+{
+  "name": "wildwood",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Wildwood hunting simulator with PvP relay server",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

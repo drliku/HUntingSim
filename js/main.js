@@ -15,6 +15,9 @@ import { ForageManager } from './forage.js';
 import { DIFFICULTY, FREE_ROAM, STORES } from './modes.js';
 import { CabinUpgrades } from './upgrades.js';
 import { Net, seedRandom } from './net.js';
+import { loadLook, lookColor } from './avatar.js';
+import { Crates } from './loot.js';
+import { rollRarity, RARITY } from './rarity.js';
 
 // Yield so the loading bar can paint; the timeout keeps loading going in background tabs where rAF pauses
 const nextFrame = () => new Promise((r) => { let done = false; const go = () => { if (!done) { done = true; setTimeout(r, 0); } }; requestAnimationFrame(go); setTimeout(go, 60); });
@@ -80,6 +83,8 @@ async function boot() {
   const forage = new ForageManager(scene, world);
   G.forage = forage;
   if (unseed) unseed();
+  const crates = new Crates(scene, world);
+  G.crates = crates;
   G.mode = 'free';
   G.cfg = FREE_ROAM;
   world.onFireOut = (fire) => { if (Math.hypot(fire.x - player.pos.x, fire.z - player.pos.z) < 40) ui.toast('The campfire has burned out.', 'info'); };
@@ -88,6 +93,7 @@ async function boot() {
   await nextFrame();
   const equipment = new Equipment(renderer);
   G.equipment = equipment;
+  equipment.setSleeveColor(lookColor('jacket', loadLook().jacket));
   equipment.resize(camera.aspect);
   const audio = new AudioSystem();
   G.audio = audio;
@@ -138,9 +144,12 @@ async function boot() {
       equipment.item = 'knife'; equipment.nextItem = null;
       for (const k in equipment.ammo) { equipment.ammo[k].mag = 0; equipment.ammo[k].reserve = 0; }
       survival.money = G.cfg.money;
+      equipment.resetRarity();
       Object.assign(G.sandbox, { survival: true, infiniteAmmo: false, observerMode: false, poachers: true, revealAnimals: false });
     }
     G.started = true;
+    crates.clear();
+    crates.fill();
     ui.hideMainMenu();
     ui.closeMenus();
     input.lock();
@@ -159,6 +168,7 @@ async function boot() {
     G.sandbox.poachers = false;
     const net = new Net(p);
     G.net = net;
+    if (p.role !== 'host') crates.clear(); // the host's crates arrive with the world sync
     net.connect();
     const [sx, sz] = p.role === 'host' ? [-40, -54] : net.respawnPoint();
     player.teleport(sx, sz);
@@ -171,6 +181,7 @@ async function boot() {
     equipment.owned = { rifle: false, shotgun: false, pistol: false, bow: false, knife: true, binoculars: false, bait: false, call: false };
     equipment.item = 'knife'; equipment.nextItem = null; equipment.reloadT = 0; equipment.draw = 0;
     for (const k in equipment.ammo) { equipment.ammo[k].mag = 0; equipment.ammo[k].reserve = 0; }
+    equipment.resetRarity();
     player.inBed = null;
     const [x, z] = G.net.respawnPoint();
     player.teleport(x, z);
@@ -239,6 +250,8 @@ async function boot() {
         return;
       }
     }
+    const ci = crates.nearest(P.pos.x, P.pos.z, 1.8);
+    if (ci >= 0) { interaction = { kind: 'crate', i: ci, text: '<kbd>E</kbd>Open the supply crate' }; return; }
     const ar = equipment.nearestStuckArrow(P.pos.x, P.pos.z, 1.8);
     if (ar) { interaction = { kind: 'arrow', ar, text: '<kbd>E</kbd>Pick up your arrow' }; return; }
     for (const d of poachers.drops) {
@@ -315,12 +328,17 @@ async function boot() {
       interactT = 0;
     } else if (interaction.kind === 'store') {
       ui.showStore(interaction.st);
+    } else if (interaction.kind === 'crate') {
+      crates.open(interaction.i);
+      interactT = 0;
     } else if (interaction.kind === 'arrow') {
       equipment.pickupArrow(interaction.ar);
       interactT = 0;
     } else if (interaction.kind === 'drop') {
       poachers.takeDrop(interaction.d);
-      if (!equipment.owned.rifle) { equipment.owned.rifle = true; equipment.ammo.rifle.mag = 3; ui.toast('You pick up the poacher\'s rifle. It has 3 rounds left. Press 1 to use it.', 'good'); }
+      const tier = Math.min(rollRarity(), 3);
+      if (!equipment.owned.rifle) { equipment.owned.rifle = true; equipment.setRarity('rifle', tier); equipment.ammo.rifle.mag = 3; ui.toast(`You pick up the poacher's ${RARITY[tier].name.toLowerCase()} rifle. It has 3 rounds left. Press 1 to use it.`, 'good'); }
+      else if (tier > equipment.tier('rifle')) { equipment.setRarity('rifle', tier); equipment.ammo.rifle.reserve += 4; ui.toast(`The poacher's rifle is ${RARITY[tier].name} — better than yours. You keep it, with 4 cartridges.`, 'good'); }
       else { equipment.ammo.rifle.reserve += 4; ui.toast('You take 4 cartridges from the poacher\'s rifle.', 'good'); }
     } else if (interaction.kind === 'forage') {
       const t = interaction.node.type;
@@ -366,6 +384,7 @@ async function boot() {
     world.update(dt, camera.position);
     if (!G.net.isHost) animals.netUpdate(dt); else animals.update(dt);
     birds.update(dt);
+    crates.update(dt);
     survival.update(dt);
     world.updateStores(world.env.time, player.pos.x, player.pos.z);
     G.net.tick(dt);
@@ -442,6 +461,7 @@ async function boot() {
       if (G.net && !G.net.isHost) animals.netUpdate(dt); else animals.update(dt);
       birds.update(dt);
       poachers.update(dt);
+      crates.update(dt);
       G.net?.tick(dt);
       if (G.net) ui.updateBoard(input.isDown('Tab'));
       survival.update(dt);

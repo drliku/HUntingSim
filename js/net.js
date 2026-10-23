@@ -4,7 +4,7 @@
 // the victim, whose game applies the damage. All players build the same world from a shared seed.
 import * as THREE from 'three';
 import { G } from './state.js';
-import { colorize, mergeColored, xf, ellipsoid, cylinderBetween } from './geo.js';
+import { Avatar, DEFAULT_LOOK, sanitizeLook, lookColor, loadLook } from './avatar.js';
 
 // Replace Math.random with a seeded generator (so every player builds the same forest).
 // Returns a function that puts the real Math.random back.
@@ -30,35 +30,10 @@ const DAMAGE = {
   knife: { head: 40, body: 40, legs: 40 },
 };
 const WEAPON_NAME = { rifle: 'rifle', pistol: 'revolver', arrow: 'bow', shot: 'shotgun', knife: 'knife' };
-const VEST = [0xe8641c, 0x2a7ad8, 0xd8c020, 0xc03a8a, 0x30b070, 0x8a5ad8];
 const SPAWNS = [[-40, -54], [118, 46], [-75, 15], [135, 25], [-15, 150], [95, -150], [-150, -130], [140, 125], [30, 80], [-110, 90]];
 const r2 = (v) => Math.round(v * 100) / 100;
-const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 // ---------- other players ----------
-const avatarMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-function avatarGeometry(vest) {
-  const skin = 0xc49a7a, pants = 0x3a3a30, boots = 0x2a2420;
-  const body = [];
-  body.push(colorize(xf(new THREE.BoxGeometry(0.44, 0.62, 0.26), 0, 1.26, 0), vest));
-  body.push(colorize(xf(new THREE.BoxGeometry(0.46, 0.12, 0.28), 0, 0.98, 0), 0x3a3022));
-  body.push(ellipsoid(0, 1.68, 0.02, 0.11, 0.13, 0.12, skin, 10, 8));
-  body.push(colorize(xf(new THREE.CylinderGeometry(0.125, 0.125, 0.08, 10), 0, 1.79, 0), vest));
-  body.push(colorize(xf(new THREE.BoxGeometry(0.2, 0.02, 0.14), 0, 1.76, 0.12), vest));
-  body.push(colorize(xf(new THREE.BoxGeometry(0.3, 0.38, 0.12), 0, 1.3, -0.17), 0x4a4030));
-  body.push(cylinderBetween(V(0.24, 1.5, 0), V(0.2, 1.22, 0.22), 0.055, 0.05, 6, vest));
-  body.push(cylinderBetween(V(-0.24, 1.5, 0), V(-0.05, 1.3, 0.34), 0.055, 0.05, 6, vest));
-  body.push(ellipsoid(0.2, 1.2, 0.26, 0.05, 0.05, 0.05, skin, 6, 5));
-  body.push(ellipsoid(-0.04, 1.3, 0.38, 0.05, 0.05, 0.05, skin, 6, 5));
-  const leg = [];
-  leg.push(colorize(xf(new THREE.BoxGeometry(0.16, 0.86, 0.18), 0, -0.43, 0), pants));
-  leg.push(colorize(xf(new THREE.BoxGeometry(0.17, 0.1, 0.28), 0, -0.88, 0.05), boots));
-  const gun = [];
-  gun.push(colorize(xf(new THREE.BoxGeometry(0.05, 0.08, 0.5), 0, 0, -0.05), 0x4a3020));
-  gun.push(colorize(xf(new THREE.CylinderGeometry(0.012, 0.012, 0.6, 6), 0, 0.03, 0.45, Math.PI / 2, 0, 0), 0x222222));
-  return { body: mergeColored(body), leg: mergeColored(leg), gun: mergeColored(gun) };
-}
-
 function nameTag(name, color) {
   const cv = document.createElement('canvas');
   cv.width = 256; cv.height = 64;
@@ -81,60 +56,55 @@ class RemotePlayer {
   constructor(id, name) {
     this.id = id;
     this.name = name;
-    this.color = VEST[(id - 1) % VEST.length];
-    const g = avatarGeometry(this.color);
-    this.root = new THREE.Group();
-    this.body = new THREE.Mesh(g.body, avatarMat);
-    this.legs = [new THREE.Mesh(g.leg, avatarMat), new THREE.Mesh(g.leg, avatarMat)];
-    this.legs[0].position.set(0.11, 0.95, 0); this.legs[1].position.set(-0.11, 0.95, 0);
-    this.gun = new THREE.Mesh(g.gun, avatarMat);
-    this.gun.position.set(0.08, 1.26, 0.28);
-    this.gun.rotation.set(-0.15, 0.25, 0);
-    this.tag = nameTag(name, this.color);
-    this.root.add(this.body, ...this.legs, this.gun, this.tag);
-    [this.body, ...this.legs, this.gun].forEach((m) => { m.castShadow = true; });
+    this.look = { ...DEFAULT_LOOK };
+    this.avatar = new Avatar(this.look);
+    this.root = this.avatar.root;
+    this.setTag();
     this.pos = new THREE.Vector3(0, -50, 0);
     this.target = new THREE.Vector3(0, -50, 0);
     this.eye = new THREE.Vector3();
-    this.yaw = 0; this.crouch = false; this.item = 'knife'; this.hp = 100;
+    this.yaw = 0; this.pitch = 0; this.aim = 0; this.draw = 0; this.crouch = false; this.item = 'knife'; this.hp = 100;
     this.dead = false; this.moving = false; this.visibility = 0.5; this.noise = 0.2;
     this.inBed = false; this.inCabinSafe = false; this.swimming = false;
-    this.kills = 0; this.deaths = 0; this.shotAt = 0; this.seen = false; this.phase = 0;
+    this.kills = 0; this.deaths = 0; this.shotAt = 0; this.seen = false;
     G.scene.add(this.root);
+  }
+
+  setTag() {
+    if (this.tag) { this.root.remove(this.tag); this.tag.material.map.dispose(); this.tag.material.dispose(); }
+    this.tag = nameTag(this.name, lookColor('jacket', this.look.jacket));
+    this.root.add(this.tag);
+  }
+
+  setLook(look) {
+    this.look = sanitizeLook(look);
+    this.avatar.setLook(this.look);
+    this.setTag();
   }
 
   apply(m) {
     this.target.set(m.x, m.y, m.z);
     if (!this.seen) { this.pos.copy(this.target); this.seen = true; }
-    this.yaw = m.yaw; this.crouch = !!m.c; this.item = m.it; this.hp = m.hp;
+    this.yaw = m.yaw; this.pitch = m.p || 0; this.aim = m.a || 0; this.draw = m.d || 0; this.tier = m.r || 0;
+    this.crouch = !!m.c; this.item = m.it; this.hp = m.hp;
     this.dead = !!m.dead; this.moving = !!m.mv; this.visibility = m.vis; this.noise = m.no;
     this.inBed = !!m.bed; this.inCabinSafe = !!m.safe; this.swimming = !!m.sw;
   }
 
   update(dt) {
-    const k = Math.min(1, dt * 12);
-    const before = this.pos.x + this.pos.z;
-    this.pos.lerp(this.target, k);
-    const moved = Math.abs(this.pos.x + this.pos.z - before);
-    this.eye.set(this.pos.x, this.pos.y + (this.crouch ? 1.05 : 1.6), this.pos.z);
+    this.pos.lerp(this.target, Math.min(1, dt * 12));
+    this.eye.set(this.pos.x, this.pos.y + (this.crouch ? 1.15 : 1.6), this.pos.z);
     const r = this.root;
-    r.visible = this.seen;
+    r.visible = this.seen && !this.inBed; // the bed hides you under the covers
     r.position.copy(this.pos);
     if (this.swimming) r.position.y -= 1.15;
-    r.rotation.y = this.yaw + Math.PI;
-    r.rotation.z = this.dead ? 1.45 : 0;
     if (this.dead) r.position.y += 0.25;
-    r.scale.y = this.crouch && !this.dead ? 0.72 : 1;
-    this.phase += moved * 4;
-    const sw = this.moving && !this.dead ? Math.sin(this.phase) * 0.5 : 0;
-    this.legs[0].rotation.x = sw; this.legs[1].rotation.x = -sw;
-    this.gun.visible = ['rifle', 'shotgun', 'pistol', 'bow'].includes(this.item) && !this.dead;
+    r.rotation.y = this.yaw + Math.PI;
+    this.avatar.update(dt, { pitch: this.pitch, aim: this.aim, draw: this.draw, item: this.item, tier: this.tier, moving: this.moving, crouch: this.crouch, dead: this.dead, swimming: this.swimming });
     this.tag.visible = !this.dead && G.camera.position.distanceTo(this.pos) < 45;
-    // the bed hides you under the covers
-    if (this.inBed) r.visible = false;
   }
 
-  remove() { G.scene.remove(this.root); }
+  remove() { G.scene.remove(this.root); this.avatar.dispose(); }
 }
 
 // ---------- connection ----------
@@ -179,6 +149,7 @@ export class Net {
         this.isHost = m.host === m.id;
         for (const p of m.players) if (p.id !== this.id) this.players.set(p.id, new RemotePlayer(p.id, p.name));
         if (!this.isHost) { A.clearAll(); A.byNid.clear(); }
+        this.sendLook();
         ui.toast(this.isHost
           ? `You are hosting PvP game ${this.code}. Friends join from the main menu with this code. Other hunters are dangerous — and so is the wildlife.`
           : `Joined PvP game ${this.code}. ${m.players.length - 1} other player${m.players.length === 2 ? '' : 's'} in the forest. Trust no one.`, 'info');
@@ -189,6 +160,7 @@ export class Net {
         this.players.set(m.id, new RemotePlayer(m.id, m.name));
         ui.toast(`${m.name} entered the forest.`, 'info');
         if (this.isHost) this.sendSync(m.id);
+        this.sendLook(m.id);
         break;
       case 'peer-left': {
         const p = this.players.get(m.id);
@@ -196,6 +168,7 @@ export class Net {
         break;
       }
       case 'me': if (from) from.apply(m); break;
+      case 'look': if (from) from.setLook(m.look); break;
       case 'sync': this.applySync(m); break;
       case 'world':
         if (this.isHost) break;
@@ -214,13 +187,14 @@ export class Net {
       case 'door': { const d = W.doors[m.i]; if (d) W.setDoor(d, m.open); break; }
       case 'fire': { const f = W.fires[m.i]; if (f) { f.lit = m.lit; f.fuel = m.fuel; } break; }
       case 'pick': { const n = G.forage.nodes[m.i]; if (n && !n.picked) G.forage.pick(n); break; }
+      case 'crate': if (m.on) G.crates.show(m.i, true); else { G.crates.show(m.i, false); if (this.isHost && G.crates.respawnT > 150) G.crates.respawnT = 150; } break;
       case 'upgrade': if (!G.cabin.has(m.id)) { G.cabin.build(m.id); ui.toast(`${from ? from.name : 'Someone'} built a cabin upgrade.`, 'info'); } break;
       case 'shot': {
         const p = { x: m.x, y: m.y, z: m.z };
         const d = G.camera.position.distanceTo(new THREE.Vector3(m.x, m.y, m.z));
         if (d < 70) { if (m.w === 'pistol') G.audio?.pistolShot?.(); else if (m.w === 'shotgun') G.audio?.shotgunShot?.(); else G.audio?.gunshot(); }
         else G.audio?.distantShot?.(p);
-        if (from) from.shotAt = performance.now();
+        if (from) { from.shotAt = performance.now(); from.avatar.fire(); }
         if (this.isHost) A.soundEvent(m.x, m.z, m.loud || 300, 'shot');
         G.birds?.soundEvent(m.x, m.z, m.loud || 300, 'shot');
         break;
@@ -246,6 +220,7 @@ export class Net {
       fires: W.fires.map((f) => [f.lit ? 1 : 0, r2(f.fuel)]),
       picked: G.forage.nodes.map((n, i) => (n.picked ? i : -1)).filter((i) => i >= 0),
       upgrades: Object.keys(G.cabin.built),
+      crates: G.crates.activeList(),
       baits: W.baits.filter((b) => b.active).map((b) => [r2(b.x), r2(b.z)]),
       time: G.env.time, day: G.env.day, wx: G.env.weatherName,
     });
@@ -260,6 +235,8 @@ export class Net {
     m.fires.forEach(([lit, fuel], i) => { const f = W.fires[i]; if (f) { f.lit = !!lit; f.fuel = fuel; } });
     for (const i of m.picked) { const n = G.forage.nodes[i]; if (n && !n.picked) G.forage.pick(n); }
     for (const id of m.upgrades) G.cabin.build(id);
+    G.crates.clear();
+    for (const i of m.crates || []) G.crates.show(i, true);
     for (const [x, z] of m.baits || []) W.placeBait(x, z);
   }
 
@@ -275,7 +252,8 @@ export class Net {
     if (this.meT <= 0) {
       this.meT = 1 / 15;
       this.send({
-        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), c: P.crouch ? 1 : 0,
+        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch ? 1 : 0,
+        a: Math.round(G.equipment.aim * 10) / 10, d: G.equipment.item === 'bow' ? Math.round((G.equipment.draw || 0) * 10) / 10 : 0, r: G.equipment.tier(G.equipment.item),
         it: G.equipment.item, hp: Math.round(S.health), dead: S.dead ? 1 : 0, mv: P.moving ? 1 : 0,
         vis: r2(P.visibility || 0.5), no: r2(P.noise || 0), bed: P.inBed ? 1 : 0, safe: P.inCabinSafe ? 1 : 0, sw: P.swimming ? 1 : 0,
       });
@@ -293,6 +271,7 @@ export class Net {
   }
 
   // ---------- events from this player's game ----------
+  sendLook(to) { const m = { t: 'look', look: loadLook() }; if (to) m.to = to; this.send(m); }
   shot(item, loud) { const p = G.camera.position; this.send({ t: 'shot', x: r2(p.x), y: r2(p.y), z: r2(p.z), w: item, loud }); }
   noise(x, z, r, k) { if (!this.isHost) this.send({ t: 'noise', to: 'host', x: r2(x), z: r2(z), r, k }); }
   spook(a) { if (!this.isHost) this.send({ t: 'spook', to: 'host', n: a.nid, x: r2(G.player.pos.x), z: r2(G.player.pos.z) }); }
@@ -303,6 +282,7 @@ export class Net {
   fire(f) { this.send({ t: 'fire', i: G.world.fires.indexOf(f), lit: f.lit, fuel: f.fuel }); }
   pick(node) { this.send({ t: 'pick', i: G.forage.nodes.indexOf(node) }); }
   upgrade(id) { this.send({ t: 'upgrade', id }); }
+  crate(i, on) { this.send({ t: 'crate', i, on: on ? 1 : 0 }); }
   down(a, part) {
     this.send({ t: 'down', n: a.nid, part, px: r2(a.pos.x), pz: r2(a.pos.z), h: a.heading, side: a.downSide, run: a.runOff, sx: r2(G.player.pos.x), sz: r2(G.player.pos.z) });
   }
@@ -315,9 +295,9 @@ export class Net {
     let best = null;
     for (const p of this.players.values()) {
       if (p.dead || !p.seen || p.inBed) continue;
-      const base = p.pos.y - (p.swimming ? 1.15 : 0), k = p.crouch ? 0.72 : 1;
+      const base = p.pos.y - (p.swimming ? 1.15 : 0), dn = p.crouch ? 0.32 : 0;
       for (const [y, r, part] of [[0.5, 0.22, 'legs'], [1.2, 0.3, 'body'], [1.68, 0.16, 'head']]) {
-        const cx = p.pos.x - o.x, cy = base + y * k - o.y, cz = p.pos.z - o.z;
+        const cx = p.pos.x - o.x, cy = base + y - (part === 'legs' ? dn * 0.5 : dn) - o.y, cz = p.pos.z - o.z;
         const tc = cx * d.x + cy * d.y + cz * d.z;
         if (tc < 0) continue;
         const d2 = cx * cx + cy * cy + cz * cz - tc * tc;
@@ -331,7 +311,7 @@ export class Net {
 
   hitPlayer(p, power, part, pellets = 1) {
     const table = DAMAGE[power] || DAMAGE.rifle;
-    const dmg = Math.round(table[part] * pellets);
+    const dmg = Math.round(table[part] * pellets * G.equipment.dmgMult(power));
     this.send({ t: 'hitP', to: p.id, dmg, part, w: power, x: r2(G.player.pos.x), z: r2(G.player.pos.z) });
     G.ui.hitMarker(part === 'head');
     G.ui.toast(`You hit ${p.name}${part === 'head' ? ' in the head' : part === 'legs' ? ' in the leg' : ''} (${dmg} damage).`, 'info');

@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { G, settings, saveProgress } from './state.js';
 import { clamp, damp, lerp, smoothstep } from './utils.js';
+import { RARITY, rarityMap, recolor } from './rarity.js';
 import { colorize, mergeColored, xf, ellipsoid, cylinderBetween } from './geo.js';
 import { S } from './animals.js';
 import { SPECIES } from './species.js';
@@ -26,6 +27,14 @@ export const WEAPONS = {
 
 function part(geo, color, x, y, z, rx = 0, ry = 0, rz = 0) { return colorize(xf(geo, x, y, z, rx, ry, rz), color); }
 const glove = 0x3b3a30, sleeve = 0x4a4f3a;
+// stock (wood) and metal colours of each first-person weapon, for rarity finishes
+const VM_COLORS = {
+  rifle: { wood: [0x5b3a22, 0x4a2e1a], metal: [0x26282b, 0x3a3d41] },
+  shotgun: { wood: [0x6a4428, 0x5a3a22], metal: [0x2a2c2e, 0x45484c] },
+  pistol: { wood: [0x5a3a22], metal: [0x2a2c30, 0x4a4e54] },
+  bow: { wood: [0x6a3e22, 0x4a2a16], metal: [] },
+};
+const POWER_ITEM = { rifle: 'rifle', shot: 'shotgun', pistol: 'pistol', arrow: 'bow' };
 
 function buildRifle() {
   const wood = 0x5b3a22, woodD = 0x4a2e1a, metal = 0x26282b, metalL = 0x3a3d41;
@@ -247,6 +256,7 @@ export class Equipment {
     this.models.binoculars = group(new THREE.Mesh(buildBinoculars(), mat));
     this.models.bait = group(new THREE.Mesh(buildBaitBag(), mat));
     this.models.call = group(new THREE.Mesh(buildCall(), mat));
+    this.rarity = { rifle: 0, shotgun: 0, pistol: 0, bow: 0 };
 
     this.hipPos = new THREE.Vector3(0.16, -0.18, -0.56);
     this.adsPos = new THREE.Vector3(0, -0.083, -0.2);
@@ -305,6 +315,66 @@ export class Equipment {
   }
 
   resize(aspect) { this.vmCamera.aspect = aspect; this.vmCamera.updateProjectionMatrix(); }
+
+  // ---------- rarity ----------
+  tier(item) { return (this.rarity && this.rarity[item]) || 0; }
+  rar(item) { return RARITY[this.tier(item)]; }
+  magSize(item) { const W = WEAPONS[item]; return W.magSize ? W.magSize + this.rar(item).mag : 0; }
+  lethalBonus(power) { const it = POWER_ITEM[power]; return it ? this.rar(it).lethal : 0; }
+  dmgMult(power) { const it = POWER_ITEM[power]; return it ? this.rar(it).dmg : 1; }
+
+  applyRarityLook(item) {
+    const cols = VM_COLORS[item], m = this.models[item];
+    if (!cols || !m) return;
+    const map = rarityMap(this.tier(item), cols.wood, cols.metal);
+    m.traverse((o) => { if (o.isMesh && o.geometry.attributes.color) recolor(o.geometry, map); });
+  }
+
+  resetRarity() {
+    this.rarity = { rifle: 0, shotgun: 0, pistol: 0, bow: 0 };
+    for (const it of Object.keys(VM_COLORS)) this.applyRarityLook(it);
+  }
+
+  setRarity(item, tier) {
+    this.rarity[item] = tier;
+    this.applyRarityLook(item);
+    const am = this.ammo[item], max = this.magSize(item);
+    if (am && WEAPONS[item].gun && am.mag > max) am.mag = max;
+  }
+
+  // A weapon from a crate or a poacher: new, an upgrade, or (if no better) just its ammo
+  grantWeapon(item, tier) {
+    const W = WEAPONS[item], am = this.ammo[item];
+    const extra = W.gun ? W.magSize : 4;
+    if (!this.owned[item]) {
+      this.owned[item] = true;
+      this.setRarity(item, tier);
+      if (W.gun) am.mag = this.magSize(item);
+      am.reserve += extra;
+      return 'new';
+    }
+    am.reserve += extra;
+    if (tier > this.tier(item)) { this.setRarity(item, tier); return 'upgrade'; }
+    return 'dupe';
+  }
+
+  // First-person sleeves take the colour of the jacket chosen in "Customize hunter"
+  setSleeveColor(hex) {
+    const ref = colorize(new THREE.BoxGeometry(0.01, 0.01, 0.01), sleeve).attributes.color.array;
+    const nc = colorize(new THREE.BoxGeometry(0.01, 0.01, 0.01), hex).attributes.color.array;
+    this.vmScene.traverse((o) => {
+      const c = o.geometry && o.geometry.attributes.color;
+      if (!c) return;
+      if (!o.geometry.userData.origColors) o.geometry.userData.origColors = c.array.slice();
+      const orig = o.geometry.userData.origColors;
+      for (let i = 0; i < orig.length; i += 3) {
+        if (Math.abs(orig[i] - ref[0]) < 1e-4 && Math.abs(orig[i + 1] - ref[1]) < 1e-4 && Math.abs(orig[i + 2] - ref[2]) < 1e-4) {
+          c.array[i] = nc[0]; c.array[i + 1] = nc[1]; c.array[i + 2] = nc[2];
+        }
+      }
+      c.needsUpdate = true;
+    });
+  }
 
   update(dt, input) {
     const P = G.player;
@@ -474,21 +544,21 @@ export class Equipment {
     const W = this.W;
     if (!W.gun) return;
     const am = this.ammo[this.item];
-    if (am.mag >= W.magSize || this.reloadT > 0 || this.cycleT > 0) return;
+    if (am.mag >= this.magSize(this.item) || this.reloadT > 0 || this.cycleT > 0) return;
     if (am.reserve <= 0 && !G.sandbox.infiniteAmmo) { G.ui.toast(`No ${W.ammo} left. Buy more at the gunsmith in town.`, 'warn'); return; }
-    this.reloadT = W.reload;
+    this.reloadT = W.reload * this.rar(this.item).speed;
     G.audio?.reloadSound();
   }
 
   finishReload() {
     const W = this.W, am = this.ammo[this.item];
     if (!W || !W.gun) return;
-    const need = W.perShell ? 1 : W.magSize - am.mag;
+    const need = W.perShell ? 1 : this.magSize(this.item) - am.mag;
     const take = G.sandbox.infiniteAmmo ? need : Math.min(need, am.reserve);
     am.mag += take;
     if (!G.sandbox.infiniteAmmo) am.reserve -= take;
     // shotguns load one shell at a time until full
-    if (W.perShell && am.mag < W.magSize && (am.reserve > 0 || G.sandbox.infiniteAmmo)) { this.reloadT = W.reload; G.audio?.dryFire(); }
+    if (W.perShell && am.mag < this.magSize(this.item) && (am.reserve > 0 || G.sandbox.infiniteAmmo)) { this.reloadT = W.reload * this.rar(this.item).speed; G.audio?.dryFire(); }
   }
 
   fire() {
@@ -508,11 +578,11 @@ export class Equipment {
     P.pitch += (aimed ? 0.006 : 0.012) * rk;
     P.shake = 0.2 * rk;
     if (this.item === 'rifle') G.ui.scopeKick();
-    this.cycleT = am.mag > 0 || this.item === 'shotgun' ? W.cycle : 0;
+    this.cycleT = am.mag > 0 || this.item === 'shotgun' ? W.cycle * this.rar(this.item).speed : 0;
 
     const cam = G.camera;
     const base = this._d.set(0, 0, -1).applyQuaternion(cam.quaternion).clone();
-    const spread = aimed ? W.ads : (P.moving ? W.hip * 1.6 : W.hip) * (1 - this.aim * 0.6);
+    const spread = (aimed ? W.ads : (P.moving ? W.hip * 1.6 : W.hip) * (1 - this.aim * 0.6)) * this.rar(this.item).spread;
     const origin = cam.position.clone();
     if (W.pellets > 1) this.firePellets(origin, base, spread, W);
     else {
@@ -610,7 +680,7 @@ export class Equipment {
     if (this.switchT > 0) { this.draw = 0; return; }
     if (input.left && am.reserve > 0 && !G.player.sprinting) {
       if (this.draw === 0) G.audio?.bowDraw?.();
-      this.draw = Math.min(1, this.draw + dt / 0.85);
+      this.draw = Math.min(1, this.draw + dt / (0.85 * this.rar('bow').speed));
     } else if (this.draw > 0) {
       if (this.draw > 0.2 && am.reserve > 0) this.shootArrow();
       this.draw = 0;
@@ -624,7 +694,7 @@ export class Equipment {
     G.audio?.bowShot?.();
     const cam = G.camera;
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
-    const spread = this.aim > 0.8 ? 0.004 : 0.03;
+    const spread = (this.aim > 0.8 ? 0.004 : 0.03) * this.rar('bow').spread;
     dir.x += (Math.random() - 0.5) * spread; dir.y += (Math.random() - 0.5) * spread; dir.normalize();
     const speed = 22 + 48 * this.draw;
     // the bow sight is zeroed at 20 m when aiming
@@ -774,7 +844,7 @@ export class Equipment {
       G.ui.toast(`${a.sp.name}s are protected by law. Never shoot protected birds — the bird escaped unharmed.`, 'warn');
       return;
     }
-    if (e.power && !this.isLethal(a, e)) {
+    if (e.power && !this.isLethal(a, e) && !(Math.random() < this.lethalBonus(e.power))) {
       // not enough to bring it down: it breaks off and runs
       G.ui.hitMarker(false);
       if (a.state === 'attack') a.endAttack(); else a.flee(G.player.pos.x, G.player.pos.z, true);

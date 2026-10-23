@@ -6,9 +6,11 @@ import { PORTION_KG, CARRY_KG } from './survival.js';
 import { STORES, MEAT_PRICE, priceOf, DIFFICULTY } from './modes.js';
 import { FORAGE } from './forage.js';
 import { ITEMS, WEAPONS } from './equipment.js';
+import { RARITY, RARITY_WEAPONS, UPGRADE_PRICE } from './rarity.js';
 import { WEATHER } from './environment.js';
 import { LOCATIONS } from './world.js';
 import { Stage } from './stage.js';
+import { Avatar, LOOK_OPTIONS, LOOK_LABELS, loadLook, saveLook, randomLook, lookColor, sanitizeLook } from './avatar.js';
 import { yawToBearing, compassName, formatClock, clamp, smoothstep } from './utils.js';
 import { HALF, WORLD_SIZE } from './terrain.js';
 import { S } from './animals.js';
@@ -24,7 +26,7 @@ export class UI {
       'hitmarker', 'prompt', 'track-badge', 'stance', 'noise-bar', 'vis-bar', 'detect', 'detect-text', 'item-name', 'ammo', 'ammo-mag', 'ammo-res',
       'zoom-label', 'money', 'stamina', 'stamina-bar', 'toasts', 'markers', 'scope-overlay', 'binoc-overlay', 'scope-info', 'bino-range', 'bino-bearing',
       'bino-zoom', 'bino-id', 'track-panel', 'loading', 'load-fill', 'load-text', 'mainmenu', 'lock-hint']) this.el[id] = $(id);
-    this.menus = ['pause', 'guide', 'journal', 'sandbox', 'map', 'settings', 'controls', 'harvest', 'inspect', 'sleep', 'pack', 'campfire', 'store'];
+    this.menus = ['pause', 'guide', 'journal', 'sandbox', 'map', 'settings', 'controls', 'harvest', 'inspect', 'sleep', 'pack', 'campfire', 'store', 'custom'];
     this.stage = new Stage();
     this.fpsAcc = 0; this.fpsFrames = 0;
     this.hudHidden = false;
@@ -182,7 +184,9 @@ export class UI {
 
     // loadout
     const Wp = WEAPONS[eq.item];
-    this.el['item-name'].textContent = Wp.name;
+    const tierNow = RARITY_WEAPONS.includes(eq.item) ? eq.tier(eq.item) : -1;
+    const nameHtml = tierNow >= 0 ? `<span style="color:${RARITY[tierNow].css}">${RARITY[tierNow].name}</span> ${Wp.name}` : Wp.name;
+    if (this._itemName !== nameHtml) { this.el['item-name'].innerHTML = nameHtml; this._itemName = nameHtml; }
     const am = eq.ammo[eq.item];
     if (Wp.gun) {
       this.el.ammo.style.display = '';
@@ -201,6 +205,9 @@ export class UI {
       const id = sl.dataset.slot;
       sl.classList.toggle('active', id === (eq.nextItem || eq.item));
       sl.classList.toggle('unowned', !eq.owned[id]);
+      const tr = RARITY_WEAPONS.includes(id) && eq.owned[id] ? eq.tier(id) : 0;
+      const sh = tr ? `inset 0 -2px 0 ${RARITY[tr].css}` : '';
+      if (sl.style.boxShadow !== sh) sl.style.boxShadow = sh;
       const a = eq.ammo[id];
       const txt = !eq.owned[id] || !a ? '' : WEAPONS[id].gun ? String(a.mag + a.reserve) : String(a.reserve);
       const c = sl.querySelector('.cnt');
@@ -291,6 +298,13 @@ export class UI {
     for (const p of G.poachers.threats()) {
       const [mx, my] = toMini(p.pos.x, p.pos.z);
       ctx.beginPath(); ctx.arc(mx, my, 4, 0, Math.PI * 2); ctx.fillStyle = '#e04040'; ctx.fill();
+    }
+    if (G.crates) for (const c of G.crates.spots) {
+      if (!c.active) continue;
+      const [mx, my] = toMini(c.x, c.z);
+      if (Math.hypot(mx - S / 2, my - S / 2) > S / 2 - 4) continue;
+      ctx.fillStyle = '#e8c040'; ctx.strokeStyle = 'rgba(0,0,0,.7)';
+      ctx.fillRect(mx - 3.5, my - 3.5, 7, 7); ctx.strokeRect(mx - 3.5, my - 3.5, 7, 7);
     }
     if (G.net) {
       const now = performance.now();
@@ -526,7 +540,7 @@ export class UI {
     this.bindPvp();
     document.querySelectorAll('[data-diff]').forEach((b) => b.addEventListener('click', () => G.newGame('survival', b.dataset.diff)));
     $('dt-restart').addEventListener('click', () => { if (this.pvpOver) location.href = location.pathname; else if (G.net) G.pvpRespawn(); else G.restartGame(); });
-    $('st-items').addEventListener('click', (e) => { const b = e.target.closest('[data-buy]'); if (b) this.buy(b.dataset.buy); });
+    $('st-items').addEventListener('click', (e) => { const b = e.target.closest('[data-buy]'); if (b) this.buy(b.dataset.buy); const u = e.target.closest('[data-upgrade]'); if (u) this.upgradeWeapon(u.dataset.upgrade); });
     $('st-sell').addEventListener('click', (e) => { const b = e.target.closest('[data-sell]'); if (b) this.sellMeat(b.dataset.sell, b.dataset.cooked === '1', b.dataset.all === '1'); });
   }
 
@@ -546,6 +560,7 @@ export class UI {
     if (name === 'sandbox') this.syncSandbox();
     if (name === 'settings') this.syncSettings();
     if (name === 'pack') this.renderPack();
+    if (name === 'custom') this.openCustom();
   }
 
   closeMenus() {
@@ -1081,10 +1096,19 @@ export class UI {
       const needs = it.needs && !eq.owned[it.needs];
       const price = free ? 0 : priceOf(it, cfg);
       const verb = it.upgrade ? 'Build' : 'Buy';
-      const label = owned ? (it.upgrade ? 'Built' : 'Owned') : needs ? `Needs ${WEAPONS[it.needs].short.toLowerCase()}` : price ? `${verb} $${price}` : (it.upgrade ? 'Build' : 'Take');
+      const label = owned ? (it.upgrade ? 'Built' : RARITY_WEAPONS.includes(it.id) ? `Owned · ${RARITY[eq.tier(it.id)].name}` : 'Owned') : needs ? `Needs ${WEAPONS[it.needs].short.toLowerCase()}` : price ? `${verb} $${price}` : (it.upgrade ? 'Build' : 'Take');
       const disabled = owned || needs || price > S.money;
       return `<div class="meat-row ${owned ? 'locked' : ''}"><span>${it.name}<br><small>${it.desc || ''}</small></span><span class="acts"><button class="btn small ${disabled ? '' : 'primary'}" data-buy="${it.id}" ${disabled ? 'disabled' : ''}>${label}</button></span></div>`;
     }).join('');
+    if (this.store.id === 'gun') {
+      const ups = RARITY_WEAPONS.filter((w) => eq.owned[w] && eq.tier(w) < 4).map((w) => {
+        const next = eq.tier(w) + 1, R = RARITY[next];
+        const price = free ? 0 : Math.round(UPGRADE_PRICE[next] * cfg.prices);
+        const dis = price > S.money;
+        return `<div class="meat-row"><span>Upgrade your ${WEAPONS[w].short.toLowerCase()} to <b style="color:${R.css}">${R.name}</b><br><small>+${Math.round((R.dmg - 1) * 100)}% damage, ${Math.round((1 - R.spread) * 100)}% tighter shots, ${Math.round((1 - R.speed) * 100)}% faster${R.mag ? `, +${R.mag} round${R.mag > 1 ? 's' : ''}` : ''}</small></span><span class="acts"><button class="btn small ${dis ? '' : 'primary'}" data-upgrade="${w}" ${dis ? 'disabled' : ''}>${price ? `Upgrade $${price}` : 'Upgrade'}</button></span></div>`;
+      });
+      if (ups.length) $('st-items').insertAdjacentHTML('beforeend', '<h4 style="margin:10px 0 4px">Weapon upgrades</h4>' + ups.join(''));
+    }
     const sellWrap = $('st-sell-wrap');
     sellWrap.style.display = def.buysMeat ? '' : 'none';
     if (def.buysMeat) {
@@ -1098,6 +1122,30 @@ export class UI {
       $('st-sell').innerHTML = rows.join('') || '<div class="meat-empty">You have no meat to sell. Hunt game, inspect it and harvest the meat.</div>';
     }
     $('st-note').textContent = this.store.id === 'cabin' ? `Upgrades built: ${G.cabin.count()} of ${def.items.length}. Each one appears in and around the cabin straight away.` : this.store.id === 'locker' ? 'Same prices as the gunsmith in town.' : this.store.id === 'gun' ? 'This is the only place to restock ammunition. Rifles take any game; bows are silent; shotguns are for birds.' : this.store.id === 'butcher' ? 'The butcher pays more for cooked meat.' : 'Medical supplies can save your life — first-aid kits treat poisoning.';
+  }
+
+  upgradeWeapon(w) {
+    const eq = G.equipment, S = G.survival;
+    if (!eq.owned[w] || eq.tier(w) >= 4) return;
+    const next = eq.tier(w) + 1;
+    const price = G.mode === 'survival' ? Math.round(UPGRADE_PRICE[next] * G.cfg.prices) : 0;
+    if (price > S.money) return;
+    S.money -= price;
+    eq.setRarity(w, next);
+    G.audio?.strike();
+    this.lootBanner(next, `${RARITY[next].name} ${WEAPONS[w].name.split(' · ')[0]}`, 'The gunsmith reworks your weapon.');
+    this.renderStore();
+  }
+
+  // Big centre banner when you get a weapon of some rarity
+  lootBanner(tier, title, line) {
+    const R = RARITY[tier], el = $('loot-banner');
+    el.innerHTML = `<div class="lb-tier" style="color:${R.css}">${'★'.repeat(tier + 1)} ${R.name}</div><div class="lb-title">${title}</div><div class="lb-line">${line}</div>`;
+    el.style.setProperty('--rar', R.css);
+    el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+    clearTimeout(this._lbT);
+    this._lbT = setTimeout(() => el.classList.remove('show'), tier >= 3 ? 4200 : 3000);
+    if (tier >= 3) G.audio?.bowShot?.();
   }
 
   meatPrice(type, cooked) {
@@ -1123,7 +1171,8 @@ export class UI {
     if (WEAPONS[id] && it.once) {
       eq.owned[id] = true;
       const W = WEAPONS[id];
-      if (W.gun) eq.ammo[id].mag = W.magSize;
+      eq.setRarity(id, 0);
+      if (W.gun) eq.ammo[id].mag = eq.magSize(id);
       if (id === 'bow') eq.ammo.bow.reserve += 6;
       if (W.gun || W.bow) eq.select(id);
       this.toast(`${it.name.split(' (')[0].split(' +')[0]} bought. Press ${key} to equip it.`, 'good');
@@ -1220,6 +1269,94 @@ export class UI {
     this.resume();
   }
 
+  // ---------- customize your hunter ----------
+  openCustom() {
+    const c = this.cust || this.initCustom();
+    c.look = loadLook();
+    c.avatar.setLook(c.look);
+    this.renderCustomOptions();
+    c.resize();
+  }
+
+  initCustom() {
+    const canvas = $('custom-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xfff4e0, 0x3a3a2a, 1.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    sun.position.set(2, 4, 3);
+    scene.add(sun);
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(0.9, 32), new THREE.MeshLambertMaterial({ color: 0x3a4a2a }));
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
+    const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 20);
+    camera.position.set(0, 1.25, 4.4);
+    camera.lookAt(0, 1.0, 0);
+    const avatar = new Avatar(loadLook());
+    scene.add(avatar.root);
+    const c = { renderer, scene, camera, avatar, look: loadLook(), item: 'rifle', aim: false, yaw: 0.5, drag: null, t: 0 };
+    c.resize = () => {
+      const w = canvas.clientWidth || 320, h = canvas.clientHeight || 420;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    };
+    canvas.addEventListener('pointerdown', (e) => { c.drag = e.clientX; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointermove', (e) => { if (c.drag !== null) { c.yaw += (e.clientX - c.drag) * 0.012; c.drag = e.clientX; } });
+    canvas.addEventListener('pointerup', () => { c.drag = null; });
+    $('custom-opts').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-look]');
+      if (!b) return;
+      c.look[b.dataset.look] = b.dataset.val;
+      this.applyLook(c.look);
+    });
+    $('custom-hold').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-hold]');
+      if (!b) return;
+      if (b.dataset.hold === 'aim') c.aim = !c.aim; else c.item = b.dataset.hold;
+      this.renderCustomOptions();
+    });
+    $('custom-random').addEventListener('click', () => { c.look = sanitizeLook(randomLook()); this.applyLook(c.look); });
+    window.addEventListener('resize', () => { if (G.menuOpen === 'custom') c.resize(); });
+    this.cust = c;
+    return c;
+  }
+
+  applyLook(look) {
+    const c = this.cust;
+    c.look = sanitizeLook(look);
+    saveLook(c.look);
+    c.avatar.setLook(c.look);
+    G.equipment?.setSleeveColor(lookColor('jacket', c.look.jacket));
+    G.net?.sendLook();
+    this.renderCustomOptions();
+  }
+
+  renderCustomOptions() {
+    const c = this.cust;
+    const swatch = (hex) => (hex !== undefined ? `<i class="sw" style="background:#${hex.toString(16).padStart(6, '0')}"></i>` : '');
+    $('custom-opts').innerHTML = Object.keys(LOOK_OPTIONS).map((k) => {
+      if (k === 'hatColor' && c.look.hat === 'none') return '';
+      return `<div class="cust-row"><h4>${LOOK_LABELS[k]}</h4><div class="chips">${LOOK_OPTIONS[k].map(([id, label, hex]) => `<button class="chip ${c.look[k] === id ? 'on' : ''}" data-look="${k}" data-val="${id}">${swatch(hex)}${label}</button>`).join('')}</div></div>`;
+    }).join('');
+    const items = [['rifle', 'Rifle'], ['shotgun', 'Shotgun'], ['pistol', 'Revolver'], ['bow', 'Bow'], ['knife', 'Knife'], ['binoculars', 'Binoculars']];
+    $('custom-hold').innerHTML = items.map(([id, l]) => `<button class="chip ${c.item === id ? 'on' : ''}" data-hold="${id}">${l}</button>`).join('') +
+      `<button class="chip aim ${c.aim ? 'on' : ''}" data-hold="aim">${c.aim ? 'Aiming' : 'Aim'}</button>`;
+  }
+
+  renderCustom(dt) {
+    const c = this.cust;
+    if (!c) return;
+    c.t += dt;
+    if (c.drag === null) c.yaw += dt * 0.25;
+    c.avatar.root.rotation.y = c.yaw;
+    const drawing = c.aim && c.item === 'bow';
+    c.avatar.update(dt, { pitch: c.aim ? 0.05 : 0, aim: c.aim ? 1 : 0, draw: drawing ? 1 : 0, item: c.item, tier: G.equipment && G.equipment.owned[c.item] ? G.equipment.tier(c.item) : 0, moving: false, crouch: false, dead: false, swimming: false });
+    c.renderer.render(c.scene, c.camera);
+  }
+
   // ---------- PvP ----------
   bindPvp() {
     const status = (t, err = false) => { $('pvp-status').textContent = t; $('pvp-status').classList.toggle('pvp-err', err); };
@@ -1308,5 +1445,6 @@ export class UI {
   renderStage(dt) {
     this.menuTick(dt);
     if (G.menuOpen === 'guide' || G.menuOpen === 'harvest' || G.menuOpen === 'inspect') this.stage.render(dt);
+    if (G.menuOpen === 'custom') this.renderCustom(dt);
   }
 }

@@ -436,3 +436,26 @@ select option { background: #1a1d1b; }
 .pvp-board th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding-bottom: 4px; }
 .pvp-board td { padding: 3px 0; border-top: 1px solid var(--line); }
 .pvp-err { color: #f3b0a2 !important; background: rgba(224,90,70,.14); border: 1px solid rgba(224,90,70,.5); border-radius: 8px; padding: 8px 10px; line-height: 1.4; }
+
+/* ---------- customize hunter ---------- */
+.custom-panel { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 40px); display: flex; flex-direction: column; }
+.custom-body { display: grid; grid-template-columns: minmax(240px, 340px) 1fr; gap: 20px; overflow: auto; min-height: 0; }
+.custom-preview { display: flex; flex-direction: column; gap: 8px; }
+#custom-canvas { width: 100%; height: 420px; border-radius: 12px; background: radial-gradient(ellipse at 50% 35%, rgba(255,255,255,.08), rgba(0,0,0,.25)); cursor: grab; touch-action: none; }
+#custom-canvas:active { cursor: grabbing; }
+.custom-opts { display: flex; flex-direction: column; gap: 12px; }
+.cust-row h4 { margin: 0 0 6px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line-strong); background: rgba(255,255,255,.04); font-size: 13px; transition: background .15s, border-color .15s; }
+.chip:hover, .chip:focus-visible { border-color: var(--accent); }
+.chip.on { border-color: var(--accent); background: var(--accent-soft); color: #fff; }
+.chip .sw { width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35); }
+.chip.aim { font-weight: 600; }
+@media (max-width: 720px) { .custom-body { grid-template-columns: 1fr; } #custom-canvas { height: 300px; } }
+
+/* ---------- weapon rarity ---------- */
+.loot-banner { position: absolute; top: 22%; left: 50%; transform: translate(-50%, -10px) scale(.96); min-width: 300px; max-width: calc(100vw - 32px); padding: 14px 26px 16px; text-align: center; border-radius: 14px; background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--rar, #aaa) 30%, transparent), rgba(10,12,10,.82) 70%); border: 1px solid var(--rar, #aaa); box-shadow: 0 0 40px color-mix(in srgb, var(--rar, #aaa) 35%, transparent); opacity: 0; pointer-events: none; transition: opacity .35s, transform .35s; }
+.loot-banner.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
+.loot-banner .lb-tier { font: 700 15px var(--num, inherit); letter-spacing: 3px; text-transform: uppercase; }
+.loot-banner .lb-title { font-size: 22px; font-weight: 600; margin-top: 2px; color: #fff; }
+.loot-banner .lb-line { font-size: 13px; color: var(--muted); margin-top: 4px; }

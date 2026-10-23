@@ -18,6 +18,7 @@
   <!-- ================= HUD ================= -->
   <div id="hud" class="hidden">
     <div id="pvp-hud" class="pvp-hud hidden"></div>
+    <div id="loot-banner" class="loot-banner"></div>
     <div id="pvp-board" class="pvp-board glass hidden"></div>
     <div id="compass">
       <div id="compass-window"><div id="compass-strip"></div></div>
@@ -169,6 +170,7 @@
           <div class="pvp-row"><input id="pvp-code" maxlength="4" placeholder="CODE" autocomplete="off" /><button class="btn small primary" id="pvp-join">Join game</button></div>
           <p class="muted small" id="pvp-status"></p>
         </div>
+        <button class="mm-item" data-open="custom"><span>Customize hunter</span><small>Your jacket, hat and look in PvP</small></button>
         <button class="mm-item" data-open="journal"><span>Hunting Journal</span><small>Your sightings and harvests</small></button>
         <button class="mm-item" data-open="guide"><span>Field Guide</span><small id="mm-guide-sub">Species you have recorded</small></button>
         <button class="mm-item" data-open="settings"><span>Settings</span><small>Mouse, graphics and sound</small></button>
@@ -196,6 +198,7 @@
         <button class="btn" data-open="sandbox">Sandbox <kbd>B</kbd></button>
         <button class="btn" data-open="settings">Settings</button>
         <button class="btn" data-open="controls">Controls</button>
+        <button class="btn" data-open="custom">Customize hunter</button>
         <button class="btn wide" data-action="mainmenu">Main menu</button>
       </div>
     </div>
@@ -281,6 +284,22 @@
         <button class="btn small" id="cf-douse">Put out the fire</button>
         <button class="btn" data-action="back">Done</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Customize your hunter -->
+  <div id="custom" class="menu hidden">
+    <div class="menu-panel glass custom-panel">
+      <div class="menu-head"><div><div class="g-family">Your character</div><h2>Customize your hunter</h2></div><button class="btn ghost close" data-action="back">✕</button></div>
+      <div class="custom-body">
+        <div class="custom-preview">
+          <canvas id="custom-canvas"></canvas>
+          <p class="muted small">Drag to turn. This is how other players see you in PvP.</p>
+          <div class="chips" id="custom-hold"></div>
+        </div>
+        <div class="custom-opts" id="custom-opts"></div>
+      </div>
+      <div class="menu-foot hv-actions"><button class="btn" id="custom-random">Randomize</button><button class="btn primary" data-action="back">Done</button></div>
     </div>
   </div>
 

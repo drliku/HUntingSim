@@ -90,6 +90,13 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers â€
 - **Sandbox (B):** spawn animals, set the population of each species, set the weather, time of day and time speed, and teleport to named locations or near the closest member of a species. Toggles cover infinite ammo, observer mode (animals ignore you), revealing animals on the HUD and map, and unlocking the guide.
 - **Journal (J):** a log of sightings and harvests with statistics. Progress and settings are saved in `localStorage`.
 
+## Models
+
+- **Smooth lofted models:** animals are built from continuous lofted shapes (body with chest, tucked waist and rump; head with skull, brow and snout; tapered legs; leaf-shaped ears; curved antlers and ridged horns) with fur shading, eye highlights, nostrils, toes, claws and split hooves painted or modelled in. Animals more than about 60 m away switch to a lighter version of the same model.
+- **Hunters:** shaped torso with collar, zip and pockets, a face with eyes, brows, nose and ears, smooth hats, jointed arms with gloved hands, and legs with real knees (crouching bends the knees). Hair colour is one of the Customize hunter options.
+- **Weapons:** detailed rifle (shaped stock with checkering, bolt, scope with turrets and lens), shotgun (vent rib, grooved pump, ejection port), revolver (fluted cylinder, hammer, ejector rod), laminated recurve bow, drop-point knife and armoured binoculars. Other players hold the same detailed models.
+- **Trees and plants:** nearby pines have drooping, star-edged branch layers; broadleaf trees and birches have branching trunks and sunlit crowns; bushes, mossy rocks and curved grass blades. Distant trees use simpler models, and the detailed ones are off on the Low graphics setting.
+
 ## Performance notes
 
 - Vegetation is instanced and split into chunks; whole chunks are culled by distance and by the camera frustum, and grass only renders near the player.

@@ -120,6 +120,7 @@ async function boot() {
     if (world.env.sun.shadow.map) { world.env.sun.shadow.map.dispose(); world.env.sun.shadow.map = null; }
     world.env.sun.shadow.mapSize.set(qq.shadowSize, qq.shadowSize);
     world.veg.setGrassDensity(qq.grass);
+    world.veg.hiDist = qq.shadows ? 12 : -1e9;
     world.env.setViewDistance(qq.viewDist);
     scene.traverse((o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; }); });
     renderOnce = true;

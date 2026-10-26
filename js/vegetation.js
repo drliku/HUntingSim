@@ -78,18 +78,164 @@ function makeRock(rng) {
   return shadeVertical(colorize(g, 0x77736b, 0.12, rng), 0.7, 1.1);
 }
 
+// ---------- detailed models for trees close to the camera ----------
+const _vc = new THREE.Color(), _vc2 = new THREE.Color();
+// colour each vertex from its position and normal
+function paint(geo, fn) {
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  if (!g.attributes.normal) g.computeVertexNormals();
+  const p = g.attributes.position.array, n = g.attributes.normal.array;
+  const col = new Float32Array(p.length);
+  for (let i = 0; i < p.length; i += 3) {
+    _vc.setHex(fn(p[i], p[i + 1], p[i + 2], n[i], n[i + 1], n[i + 2]));
+    col[i] = _vc.r; col[i + 1] = _vc.g; col[i + 2] = _vc.b;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  if (g.attributes.uv) g.deleteAttribute('uv');
+  return g;
+}
+const mixC = (a, b, t) => _vc2.setHex(a).lerp(_vc.setHex(b), Math.max(0, Math.min(1, t))).getHex();
+const hashN = (x, y, z) => { const h = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453; return h - Math.floor(h); };
+
+// Conifer: tapered trunk and drooping, star-edged branch layers that lighten towards the tips
+function makePineHi() {
+  const parts = [];
+  const trunk = new THREE.CylinderGeometry(0.09, 0.27, 3.4, 9, 3);
+  trunk.translate(0, 1.7, 0);
+  parts.push(paint(trunk, (x, y, z) => mixC(0x3e2c1e, 0x5a4230, hashN(Math.round(Math.atan2(z, x) * 3), 0, 0) * 0.8)));
+  const flare = new THREE.ConeGeometry(0.42, 0.5, 9, 1, true);
+  flare.translate(0, 0.2, 0);
+  parts.push(paint(flare, () => 0x3a2a1c));
+  const layers = 7;
+  for (let i = 0; i < layers; i++) {
+    const t = i / (layers - 1);
+    const r = 2.05 - t * 1.6, h = 1.9 - t * 0.85, y0 = 1.7 + i * 0.95;
+    const g = new THREE.ConeGeometry(r, h, 10, 2, false);
+    const pa = g.attributes.position;
+    for (let k = 0; k < pa.count; k++) {
+      const x = pa.getX(k), y = pa.getY(k), z = pa.getZ(k);
+      const rr = Math.hypot(x, z);
+      if (rr < 1e-4) continue;
+      const a = Math.atan2(z, x), star = ((Math.round((a / (Math.PI * 2)) * 10) % 2) + 2) % 2 ? 1.16 : 0.84;
+      const rim = y < -h / 2 + 1e-3, mid = Math.abs(y) < 1e-3;
+      const f = rim ? star : mid ? 1.06 : 1;
+      pa.setXYZ(k, x * f, y - (rim ? 0.32 * star : mid ? 0.08 : 0), z * f);
+    }
+    g.rotateY(i * 0.55);
+    g.translate(0, y0 + h / 2, 0);
+    g.computeVertexNormals();
+    const dark = [0x1b3a20, 0x1f4024, 0x234628, 0x274c2b, 0x2a512e, 0x2e5732, 0x325c35][i];
+    parts.push(paint(g, (x, y, z) => {
+      const rr = Math.hypot(x, z) / r;
+      return mixC(mixC(dark, 0x0f2414, 0.35), mixC(dark, 0x5a7a3a, 0.45), rr * rr + (hashN(x, y, z) - 0.5) * 0.15);
+    }));
+  }
+  const tip = new THREE.ConeGeometry(0.22, 1.0, 7);
+  tip.translate(0, 1.7 + layers * 0.95 + 0.5, 0);
+  parts.push(paint(tip, () => 0x3a6038));
+  return mergeColored(parts);
+}
+
+// Broadleaf: root flare, a forked trunk and a crown of clumps, sunlit on top and dark inside
+function makeBroadleafHi() {
+  const parts = [];
+  const bark = (x, y, z) => mixC(0x4a3a2a, 0x5e4c38, hashN(Math.round(x * 30), Math.round(y * 6), Math.round(z * 30)));
+  const trunk = new THREE.CylinderGeometry(0.17, 0.32, 3.2, 10, 4);
+  trunk.translate(0, 1.6, 0);
+  parts.push(paint(trunk, bark));
+  const flare = new THREE.ConeGeometry(0.55, 0.6, 10, 1, true);
+  flare.translate(0, 0.25, 0);
+  parts.push(paint(flare, () => 0x3e3022));
+  const branches = [[0.9, 4.6, 0.5], [-0.8, 4.8, -0.4], [0.1, 5.3, -0.7], [-0.3, 4.4, 0.9]];
+  for (const [x, y, z] of branches) parts.push(paint(cylinderBetweenG(new THREE.Vector3(0, 3.0, 0), new THREE.Vector3(x, y, z), 0.13, 0.05, 6), bark));
+  const clumps = [[0, 5.1, 0, 1.55], [1.15, 4.6, 0.6, 1.2], [-1.0, 4.8, -0.5, 1.25], [0.2, 5.9, -0.4, 1.15], [-0.35, 4.4, 1.0, 1.1], [0.9, 5.5, -0.7, 1.0], [-1.0, 5.6, 0.5, 1.0], [0.4, 4.2, -1.0, 0.95], [0.0, 6.4, 0.3, 0.85]];
+  clumps.forEach(([x, y, z, r], i) => {
+    const g = new THREE.IcosahedronGeometry(r, 1);
+    xf(g, x, y, z, 0, i, 0, 1, 0.82, 1);
+    jitterVertices(g, 0.32, i * 7 + 1);
+    const base = [0x3b5e27, 0x46692c, 0x3f6329, 0x4a6e2e][i % 4];
+    parts.push(paint(g, (px, py, pz, nx, ny) => {
+      const sun = ny * 0.5 + 0.5, height = (py - 3.8) / 3;
+      return mixC(mixC(base, 0x1e3414, 0.55), mixC(base, 0x88a050, 0.35), sun * 0.7 + height * 0.3 + (hashN(px, py, pz) - 0.5) * 0.2);
+    }));
+  });
+  return mergeColored(parts);
+}
+
+// Birch: slender, slightly leaning white trunk with black marks and a light, drooping crown
+function makeBirchHi() {
+  const parts = [];
+  const trunk = new THREE.CylinderGeometry(0.08, 0.15, 6.2, 8, 10);
+  const pa = trunk.attributes.position;
+  for (let k = 0; k < pa.count; k++) { const y = pa.getY(k) + 3.1; pa.setX(k, pa.getX(k) + y * y * 0.006); }
+  trunk.translate(0, 3.1, 0);
+  trunk.computeVertexNormals();
+  parts.push(paint(trunk, (x, y, z) => {
+    const mark = Math.sin(y * 7.3 + Math.atan2(z, x) * 2) > 0.62 || (y < 1.2 && hashN(x, Math.round(y * 8), z) > 0.55);
+    return mark ? 0x2a2622 : mixC(0xe6e2d6, 0xc8c2b4, hashN(Math.round(x * 40), Math.round(y * 10), Math.round(z * 40)));
+  }));
+  const clumps = [[0.25, 6.3, 0, 1.2], [0.85, 5.4, 0.3, 0.95], [-0.35, 5.6, -0.35, 0.95], [0.4, 4.7, 0.55, 0.8], [-0.2, 4.9, 0.4, 0.75], [0.7, 6.0, -0.5, 0.8], [0.15, 7.0, 0.1, 0.65]];
+  clumps.forEach(([x, y, z, r], i) => {
+    const g = new THREE.IcosahedronGeometry(r, 1);
+    xf(g, x, y, z, 0, i * 1.3, 0, 0.88, 1.2, 0.88);
+    jitterVertices(g, 0.26, i * 3 + 11);
+    parts.push(paint(g, (px, py, pz, nx, ny) => mixC(mixC(0x6f8c34, 0x3a5420, 0.5), mixC(0x7a963a, 0xc0c870, 0.4), (ny * 0.5 + 0.5) * 0.8 + (hashN(px, py, pz) - 0.5) * 0.25)));
+  });
+  return mergeColored(parts);
+}
+
+function makeBushHi() {
+  const parts = [];
+  const blobs = [[0, 0.5, 0, 0.62], [0.5, 0.38, 0.22, 0.46], [-0.45, 0.4, -0.18, 0.5], [0.08, 0.42, -0.5, 0.44], [-0.2, 0.3, 0.45, 0.4], [0.42, 0.3, -0.35, 0.36], [-0.05, 0.75, 0.1, 0.38]];
+  blobs.forEach(([x, y, z, r], i) => {
+    const g = new THREE.IcosahedronGeometry(r, 1);
+    xf(g, x, y, z, 0, i, 0, 1, 0.85, 1);
+    jitterVertices(g, 0.14, i + 21);
+    parts.push(paint(g, (px, py, pz, nx, ny) => mixC(0x1e3a16, mixC([0x355a26, 0x3e6229][i % 2], 0x7a9a48, 0.3), 0.35 + (ny * 0.5 + 0.5) * 0.55 + (hashN(px, py, pz) - 0.5) * 0.2)));
+  });
+  return mergeColored(parts);
+}
+
+function makeRockHi() {
+  const g = new THREE.DodecahedronGeometry(1, 2);
+  xf(g, 0, 0.25, 0, 0, 0, 0, 1, 0.6, 1);
+  jitterVertices(g, 0.3, 5);
+  return paint(g, (x, y, z, nx, ny) => {
+    const stone = mixC(0x5e5b55, 0x8a867c, hashN(Math.round(x * 6), Math.round(y * 6), Math.round(z * 6)) * 0.8 + 0.1);
+    return mixC(stone, 0x4a6030, Math.max(0, (ny - 0.55) / 0.45) * 0.85);
+  });
+}
+
+// tapered cylinder between two points, uncoloured (paint() colours it)
+function cylinderBetweenG(a, b, r1, r2, seg) {
+  const dir = b.clone().sub(a), len = dir.length();
+  const g = new THREE.CylinderGeometry(r2, r1, len, seg);
+  g.translate(0, len / 2, 0);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()));
+  g.translate(a.x, a.y, a.z);
+  return g;
+}
+
 function makeGrassTuft(rng) {
+  // nine curved blades, each a quad and a tip, dark at the root and pale at the tip
   const pos = [], col = [];
-  const base = new THREE.Color(0x3c5a1f), tip = new THREE.Color(0x8fa04a);
-  for (let i = 0; i < 6; i++) {
-    const a = rng() * Math.PI * 2, r = rng() * 0.18;
+  const base = new THREE.Color(0x2e4a18), mid = new THREE.Color(0x58782c), tip = new THREE.Color(0x9cae54);
+  const push = (p, c) => { pos.push(p[0], p[1], p[2]); col.push(c.r, c.g, c.b); };
+  for (let i = 0; i < 9; i++) {
+    const a = rng() * Math.PI * 2, r = rng() * 0.2;
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    const h = 0.35 + rng() * 0.4, w = 0.045;
+    const h = 0.3 + rng() * 0.45, w = 0.03 + rng() * 0.015;
     const ba = rng() * Math.PI;
     const dx = Math.cos(ba) * w, dz = Math.sin(ba) * w;
-    const lean = (rng() - 0.5) * 0.25;
-    pos.push(x - dx, 0, z - dz, x + dx, 0, z + dz, x + lean, h, z + lean * 0.5);
-    col.push(base.r, base.g, base.b, base.r, base.g, base.b, tip.r, tip.g, tip.b);
+    const la = rng() * Math.PI * 2, lean = 0.08 + rng() * 0.18;
+    const lx = Math.cos(la) * lean, lz = Math.sin(la) * lean;
+    const b0 = [x - dx, 0, z - dz], b1 = [x + dx, 0, z + dz];
+    const m0 = [x - dx * 0.6 + lx * 0.35, h * 0.55, z - dz * 0.6 + lz * 0.35], m1 = [x + dx * 0.6 + lx * 0.35, h * 0.55, z + dz * 0.6 + lz * 0.35];
+    const t = [x + lx, h, z + lz];
+    const tint = 0.85 + rng() * 0.3, mc = mid.clone().multiplyScalar(tint), tc = tip.clone().multiplyScalar(tint);
+    push(b0, base); push(b1, base); push(m0, mc);
+    push(b1, base); push(m1, mc); push(m0, mc);
+    push(m0, mc); push(m1, mc); push(t, tc);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -146,10 +292,13 @@ export class Vegetation {
     this.flowerMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     addSway(this.flowerMat, 0.1, this.uniforms);
 
+    // light models for distance, detailed ones for trees near the camera
     this.geos = {
       pine: makePine(rng), broad: makeBroadleaf(rng), birch: makeBirch(rng),
       bush: makeBush(rng), rock: makeRock(rng),
     };
+    this.geosHi = { pine: makePineHi(), broad: makeBroadleafHi(), birch: makeBirchHi(), bush: makeBushHi(), rock: makeRockHi() };
+    this.hiDist = quality.shadows ? 12 : -1e9; // no detailed trees on the low setting
     this.grassGeo = makeGrassTuft(rng);
     this.flowerGeo = makeFlower();
 
@@ -257,7 +406,7 @@ export class Vegetation {
       mesh.matrixAutoUpdate = false;
       this.scene.add(mesh);
       this.chunks.push({
-        mesh,
+        mesh, type: b.type, hi: false,
         x: -HALF + (b.cx + 0.5) * CHUNK, z: -HALF + (b.cz + 0.5) * CHUNK,
         small: b.type === 'bush' || (b.type === 'rock'),
       });
@@ -346,6 +495,8 @@ export class Vegetation {
     for (const c of this.chunks) {
       const d = Math.hypot(c.x - camPos.x, c.z - camPos.z) - CHUNK * 0.71;
       c.mesh.visible = d < (c.small ? viewDist * 0.6 : viewDist);
+      const hi = d < this.hiDist;
+      if (hi !== c.hi) { c.hi = hi; c.mesh.geometry = hi ? this.geosHi[c.type] : this.geos[c.type]; }
     }
     const gd = 75;
     for (const g of this.grassChunks) {

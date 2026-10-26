@@ -108,3 +108,72 @@ export function jitterVertices(geo, amount, seed = 1) {
   geo.computeVertexNormals();
   return geo;
 }
+
+const _lc = new THREE.Color();
+
+// Loft a tube through rings. Each ring: { c: centre, rx, ry, p (squareness, 2 = ellipse) }.
+// The ring's x axis follows `side` (default +x); colour(pos, u, s, ring) returns a hex colour where
+// u = 0..1 along the tube and s = -1..1 from the ring's -y side to its +y side.
+export function loft(rings, { seg = 14, side = new THREE.Vector3(1, 0, 0), color, noise, capStart = true, capEnd = true, ySign = 1 } = {}) {
+  const n = rings.length;
+  const pos = [], cols = [], idx = [];
+  const T = new THREE.Vector3(), X = new THREE.Vector3(), Y = new THREE.Vector3(), P = new THREE.Vector3();
+  const frames = [];
+  for (let i = 0; i < n; i++) {
+    const a = rings[Math.max(0, i - 1)].c, b = rings[Math.min(n - 1, i + 1)].c;
+    T.subVectors(b, a).normalize();
+    X.copy(side).addScaledVector(T, -side.dot(T)).normalize();
+    Y.crossVectors(T, X).normalize().multiplyScalar(ySign);
+    frames.push([X.clone(), Y.clone(), T.clone()]);
+  }
+  const col = (p, u, s, i) => { _lc.setHex(color ? color(p, u, s, i) : 0xffffff); const k = noise ? noise(p) : 1; return [_lc.r * k, _lc.g * k, _lc.b * k]; };
+  for (let i = 0; i < n; i++) {
+    const r = rings[i], [fx, fy] = frames[i], e = 2 / (r.p || 2);
+    for (let j = 0; j < seg; j++) {
+      const th = (j / seg) * Math.PI * 2;
+      const cx = Math.cos(th), sy = Math.sin(th);
+      const ux = Math.sign(cx) * Math.pow(Math.abs(cx), e), uy = Math.sign(sy) * Math.pow(Math.abs(sy), e);
+      P.copy(r.c).addScaledVector(fx, ux * r.rx).addScaledVector(fy, uy * r.ry * (uy < 0 && r.ryDown ? r.ryDown : 1));
+      pos.push(P.x, P.y, P.z);
+      cols.push(...col(P, i / (n - 1), sy, i));
+    }
+  }
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < seg; j++) {
+      const a = i * seg + j, b = i * seg + (j + 1) % seg, c = (i + 1) * seg + j, d = (i + 1) * seg + (j + 1) % seg;
+      if (ySign > 0) idx.push(a, b, c, b, d, c); else idx.push(a, c, b, b, c, d);
+    }
+  }
+  const capAt = (i, dir) => {
+    const r = rings[i], k = pos.length / 3;
+    const tip = r.c.clone().addScaledVector(frames[i][2], dir * Math.min(r.rx, r.ry) * 0.35);
+    pos.push(tip.x, tip.y, tip.z);
+    cols.push(...col(tip, i / (n - 1), 0, i));
+    for (let j = 0; j < seg; j++) {
+      const a = i * seg + j, b = i * seg + (j + 1) % seg;
+      if ((dir > 0) === (ySign > 0)) idx.push(a, b, k); else idx.push(b, a, k);
+    }
+  };
+  if (capStart) capAt(0, -1);
+  if (capEnd) capAt(n - 1, 1);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g.toNonIndexed();
+}
+
+// Smooth curve through points, sampled as rings with a radius profile
+export function curveRings(points, radius, count, extra = {}) {
+  const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const t = i / (count - 1);
+    const r = typeof radius === 'function' ? radius(t) : radius;
+    const rx = Array.isArray(r) ? r[0] : r, ry = Array.isArray(r) ? r[1] : r;
+    out.push({ c: curve.getPoint(t), rx: Math.max(rx, 0.0015), ry: Math.max(ry, 0.0015), ...extra });
+  }
+  return out;
+}
+

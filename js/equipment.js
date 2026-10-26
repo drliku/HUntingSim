@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { G, settings, saveProgress } from './state.js';
 import { clamp, damp, lerp, smoothstep } from './utils.js';
 import { RARITY, rarityMap, recolor } from './rarity.js';
-import { colorize, mergeColored, xf, ellipsoid, cylinderBetween } from './geo.js';
+import { colorize, mergeColored, xf, ellipsoid, cylinderBetween, loft, curveRings } from './geo.js';
 import { S } from './animals.js';
 import { SPECIES } from './species.js';
 
@@ -36,148 +36,281 @@ const VM_COLORS = {
 };
 const POWER_ITEM = { rifle: 'rifle', shot: 'shotgun', pistol: 'pistol', arrow: 'bow' };
 
+// ---------- weapon models (first person: barrel along -z; `hands = false` gives the bare weapon) ----------
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+// a shape lofted along -z from rings [z, yCentre, rx, ry]; s > 0 is the top side
+function alongZ(rings, color, seg = 14, p = 2.4, caps = true) {
+  return loft(rings.map(([z, y, rx, ry]) => ({ c: V3(0, y, z), rx, ry, p })), {
+    seg, ySign: -1, capStart: caps, capEnd: caps, color: typeof color === 'function' ? color : () => color,
+  });
+}
+// a straight tube along a list of points with a radius profile
+function tube(points, r0, r1, color, seg = 10) {
+  return loft(curveRings(points.map((q) => V3(...q)), (t) => r0 + (r1 - r0) * t, Math.max(4, points.length * 3)), { seg, color: () => color });
+}
+const cylZ = (r0, r1, z0, z1, y, color, seg = 14, x = 0) => part(new THREE.CylinderGeometry(r0, r1, Math.abs(z1 - z0), seg), color, x, y, (z0 + z1) / 2, Math.PI / 2);
+// fine checkering on grips and fore-ends
+const checker = (p, a, b) => (Math.sin(p.z * 520) * Math.sin(p.y * 520 + p.x * 520) > 0 ? a : b);
+
 function buildRifle() {
   const wood = 0x5b3a22, woodD = 0x4a2e1a, metal = 0x26282b, metalL = 0x3a3d41;
   const p = [];
-  p.push(part(new THREE.BoxGeometry(0.042, 0.12, 0.26), wood, 0, -0.045, 0.31, -0.08));
-  p.push(part(new THREE.BoxGeometry(0.046, 0.13, 0.03), 0x1a1a1a, 0, -0.05, 0.445, -0.08));
-  p.push(part(new THREE.BoxGeometry(0.038, 0.06, 0.14), woodD, 0, -0.012, 0.13, -0.18));
-  p.push(part(new THREE.BoxGeometry(0.044, 0.05, 0.42), wood, 0, -0.005, -0.2));
-  p.push(part(new THREE.BoxGeometry(0.03, 0.025, 0.06), woodD, 0, 0.03, 0.29));
-  p.push(part(new THREE.CylinderGeometry(0.017, 0.017, 0.24, 10), metal, 0, 0.026, 0.0, Math.PI / 2));
-  p.push(part(new THREE.CylinderGeometry(0.0095, 0.012, 0.62, 10), metal, 0, 0.028, -0.42, Math.PI / 2));
-  p.push(part(new THREE.CylinderGeometry(0.012, 0.012, 0.03, 10), metalL, 0, 0.028, -0.735, Math.PI / 2));
-  p.push(part(new THREE.TorusGeometry(0.022, 0.004, 4, 10, Math.PI), metal, 0, -0.03, 0.06, 0, Math.PI / 2, Math.PI));
-  p.push(part(new THREE.BoxGeometry(0.026, 0.035, 0.018), metal, 0, 0.055, -0.06));
-  p.push(part(new THREE.BoxGeometry(0.026, 0.035, 0.018), metal, 0, 0.055, 0.07));
-  p.push(part(new THREE.CylinderGeometry(0.0155, 0.0155, 0.26, 14), metal, 0, 0.083, 0.0, Math.PI / 2));
-  p.push(part(new THREE.CylinderGeometry(0.025, 0.0155, 0.08, 14), metal, 0, 0.083, -0.165, Math.PI / 2));
-  p.push(part(new THREE.CylinderGeometry(0.025, 0.025, 0.04, 14), metal, 0, 0.083, -0.225, Math.PI / 2));
-  p.push(part(new THREE.CylinderGeometry(0.019, 0.0155, 0.06, 14), metal, 0, 0.083, 0.155, Math.PI / 2));
-  p.push(part(new THREE.CylinderGeometry(0.021, 0.021, 0.05, 14), metalL, 0, 0.083, 0.205, Math.PI / 2));
-  p.push(part(new THREE.CylinderGeometry(0.011, 0.011, 0.025, 8), metalL, 0, 0.108, 0.0));
-  p.push(part(new THREE.CircleGeometry(0.022, 14), 0x3a5a7a, 0, 0.083, -0.246, 0, Math.PI));
+  // one-piece walnut stock: butt, comb, wrist and fore-end
+  p.push(alongZ([
+    [0.458, -0.055, 0.017, 0.056], [0.452, -0.055, 0.021, 0.064], [0.36, -0.045, 0.021, 0.057], [0.27, -0.028, 0.019, 0.043],
+    [0.19, -0.012, 0.016, 0.027], [0.12, -0.003, 0.019, 0.027], [0.05, -0.005, 0.022, 0.03], [-0.08, -0.007, 0.022, 0.028],
+    [-0.2, -0.009, 0.021, 0.024], [-0.36, -0.007, 0.019, 0.02], [-0.41, -0.005, 0.015, 0.016], [-0.425, -0.004, 0.008, 0.009],
+  ], (q, u, s) => {
+    if (q.z > 0.444) return 0x1a1a1a;                       // recoil pad
+    if (q.z > 0.437) return 0xd8d0c0;                       // spacer
+    if ((q.z < -0.15 && q.z > -0.31 && Math.abs(s) < 0.75)) return checker(q, woodD, wood);
+    return wood;
+  }, 16));
+  // pistol grip with checkering and a cap
+  p.push(loft(curveRings([V3(0, -0.012, 0.185), V3(0, -0.06, 0.2), V3(0, -0.1, 0.222)], (t) => [0.016 + 0.002 * t, 0.022 + 0.003 * t], 6), {
+    seg: 12, color: (q, u) => (u > 0.92 ? 0x1a1a1a : u > 0.2 && u < 0.85 ? checker(q, woodD, wood) : wood),
+  }));
+  // receiver, bolt and trigger
+  p.push(cylZ(0.017, 0.017, -0.12, 0.12, 0.026, metal));
+  p.push(cylZ(0.014, 0.012, 0.12, 0.155, 0.027, metalL));     // bolt shroud
+  p.push(tube([[0.016, 0.03, 0.06], [0.034, 0.016, 0.068], [0.048, -0.002, 0.074]], 0.0055, 0.0045, metal, 8)); // bolt handle
+  p.push(part(new THREE.SphereGeometry(0.011, 10, 8), metalL, 0.052, -0.006, 0.076));
+  p.push(part(new THREE.TorusGeometry(0.022, 0.004, 6, 14, Math.PI), metal, 0, -0.03, 0.06, 0, Math.PI / 2, Math.PI));
+  p.push(part(new THREE.BoxGeometry(0.004, 0.024, 0.006), metalL, 0, -0.034, 0.058, 0.35));
+  p.push(part(new THREE.BoxGeometry(0.028, 0.006, 0.08), metal, 0, -0.034, -0.01));   // floorplate
+  // tapered barrel and muzzle crown
+  p.push(cylZ(0.0125, 0.0095, -0.12, -0.725, 0.028, metal));
+  p.push(cylZ(0.0108, 0.0108, -0.725, -0.738, 0.028, metalL));
+  // scope: rings and bases, main tube, objective and ocular bells, turrets, lenses
+  for (const z of [-0.06, 0.07]) {
+    p.push(part(new THREE.BoxGeometry(0.026, 0.035, 0.018), metal, 0, 0.055, z));
+    p.push(part(new THREE.TorusGeometry(0.018, 0.0045, 8, 16), metal, 0, 0.083, z));
+  }
+  p.push(cylZ(0.0155, 0.0155, -0.13, 0.13, 0.083, metal, 16));
+  p.push(cylZ(0.0155, 0.025, -0.13, -0.19, 0.083, metal, 18));
+  p.push(cylZ(0.025, 0.025, -0.19, -0.248, 0.083, metal, 18));
+  p.push(cylZ(0.0265, 0.0265, -0.236, -0.244, 0.083, metalL, 18));
+  p.push(cylZ(0.0155, 0.019, 0.13, 0.16, 0.083, metal, 16));
+  p.push(cylZ(0.021, 0.021, 0.16, 0.215, 0.083, metalL, 16));
+  p.push(cylZ(0.022, 0.022, 0.215, 0.232, 0.083, 0x1a1a1a, 16));
+  p.push(part(new THREE.CylinderGeometry(0.0115, 0.0115, 0.024, 14), metalL, 0, 0.108, 0.0));
+  p.push(part(new THREE.CylinderGeometry(0.0125, 0.0125, 0.008, 14), 0x1e1f21, 0, 0.121, 0.0));
+  p.push(part(new THREE.CylinderGeometry(0.0115, 0.0115, 0.024, 14), metalL, 0.027, 0.083, 0.0, 0, 0, Math.PI / 2));
+  p.push(part(new THREE.CircleGeometry(0.022, 18), 0x3a5a7a, 0, 0.083, -0.2485, 0, Math.PI));
+  p.push(part(new THREE.CircleGeometry(0.006, 10), 0xa8cce8, 0.008, 0.091, -0.249, 0, Math.PI));
+  // sling swivels
+  p.push(part(new THREE.TorusGeometry(0.008, 0.0018, 4, 10), metalL, 0, -0.038, -0.33, 0, Math.PI / 2, 0));
+  p.push(part(new THREE.TorusGeometry(0.008, 0.0018, 4, 10), metalL, 0, -0.118, 0.37, 0, Math.PI / 2, 0));
   return mergeColored(p);
 }
 
 function buildTwoHands(frontZ = -0.22) {
   const p = [];
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0.012, -0.03, 0.13, 0, 0, 0, 0.035, 0.045, 0.06), glove));
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 8), 0.05, -0.1, 0.27, -1.1, 0, 0.35), sleeve));
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), -0.005, -0.035, frontZ, 0, 0, 0, 0.04, 0.035, 0.07), glove));
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.34, 8), -0.08, -0.12, frontZ + 0.14, -1.25, 0, -0.6), sleeve));
+  p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0.012, -0.03, 0.13, 0, 0, 0, 0.035, 0.045, 0.06), glove));
+  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0.03, -0.012, 0.11, 0, 0, 0, 0.012, 0.012, 0.03), glove)); // trigger finger
+  p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 10), 0.05, -0.1, 0.27, -1.1, 0, 0.35), sleeve));
+  p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), -0.005, -0.035, frontZ, 0, 0, 0, 0.04, 0.035, 0.07), glove));
+  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0.022, -0.012, frontZ - 0.01, 0, 0, 0, 0.012, 0.02, 0.04), glove)); // fingers wrapped over
+  p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.34, 10), -0.08, -0.12, frontZ + 0.14, -1.25, 0, -0.6), sleeve));
   return mergeColored(p);
 }
 
 function buildShotgun() {
   const wood = 0x6a4428, metal = 0x2a2c2e, metalL = 0x45484c;
   const p = [];
-  p.push(part(new THREE.BoxGeometry(0.044, 0.12, 0.28), wood, 0, -0.05, 0.3, -0.12));
-  p.push(part(new THREE.BoxGeometry(0.046, 0.13, 0.03), 0x1a1a1a, 0, -0.065, 0.445, -0.12));
-  p.push(part(new THREE.BoxGeometry(0.04, 0.07, 0.2), metal, 0, 0.0, 0.06));                 // receiver
-  p.push(part(new THREE.CylinderGeometry(0.013, 0.013, 0.66, 10), metal, 0, 0.022, -0.38, Math.PI / 2));   // barrel
-  p.push(part(new THREE.CylinderGeometry(0.011, 0.011, 0.5, 8), metalL, 0, -0.008, -0.3, Math.PI / 2));    // magazine tube
-  p.push(part(new THREE.SphereGeometry(0.006, 6, 4), 0xd8c070, 0, 0.038, -0.7));            // bead sight
-  p.push(part(new THREE.TorusGeometry(0.022, 0.004, 4, 10, Math.PI), metal, 0, -0.04, 0.08, 0, Math.PI / 2, Math.PI));
+  p.push(alongZ([
+    [0.462, -0.072, 0.018, 0.058], [0.455, -0.072, 0.022, 0.066], [0.34, -0.052, 0.021, 0.055], [0.22, -0.026, 0.017, 0.031],
+    [0.15, -0.012, 0.017, 0.027], [0.11, -0.004, 0.019, 0.03], [0.1, -0.003, 0.015, 0.022],
+  ], (q) => (q.z > 0.448 ? 0x1a1a1a : wood), 16));
+  p.push(loft(curveRings([V3(0, -0.016, 0.165), V3(0, -0.058, 0.18), V3(0, -0.095, 0.2)], (t) => [0.016, 0.022 + 0.003 * t], 6), {
+    seg: 12, color: (q, u) => (u > 0.9 ? 0x1a1a1a : u > 0.2 && u < 0.85 ? checker(q, 0x553620, wood) : wood),
+  }));
+  // receiver with ejection port, engraving line, trigger
+  p.push(alongZ([[0.13, 0.0, 0.019, 0.034], [0.12, 0.0, 0.021, 0.037], [-0.03, 0.0, 0.021, 0.037], [-0.045, 0.004, 0.018, 0.03]], metal, 14, 4));
+  p.push(part(new THREE.BoxGeometry(0.002, 0.022, 0.065), 0x101012, 0.0215, 0.012, 0.035));
+  p.push(part(new THREE.BoxGeometry(0.002, 0.003, 0.15), metalL, 0.0215, -0.018, 0.045));
+  p.push(part(new THREE.TorusGeometry(0.022, 0.004, 6, 14, Math.PI), metal, 0, -0.04, 0.08, 0, Math.PI / 2, Math.PI));
+  p.push(part(new THREE.BoxGeometry(0.004, 0.024, 0.006), metalL, 0, -0.044, 0.078, 0.35));
+  // barrel with ventilated rib, magazine tube and cap, bead sight
+  p.push(cylZ(0.013, 0.013, -0.045, -0.71, 0.022, metal));
+  p.push(part(new THREE.BoxGeometry(0.008, 0.003, 0.64), metalL, 0, 0.0385, -0.38));
+  for (let z = -0.08; z > -0.7; z -= 0.055) p.push(part(new THREE.BoxGeometry(0.005, 0.006, 0.004), metal, 0, 0.0345, z));
+  p.push(part(new THREE.SphereGeometry(0.0055, 8, 6), 0xd8c070, 0, 0.044, -0.702));
+  p.push(cylZ(0.011, 0.011, -0.045, -0.62, -0.008, metalL, 12));
+  p.push(cylZ(0.0125, 0.0115, -0.62, -0.645, -0.008, metal, 12));
   return mergeColored(p);
 }
 
+// grooved slide-action fore-end
 function buildPump() {
-  return part(new THREE.CylinderGeometry(0.02, 0.02, 0.16, 10), 0x5a3a22, 0, 0, 0, Math.PI / 2);
+  const rings = [];
+  for (let i = 0; i <= 10; i++) {
+    const z = 0.08 - i * 0.016, groove = i > 0 && i < 10 && i % 2 === 0;
+    rings.push([z, 0, groove ? 0.0185 : 0.021, groove ? 0.0185 : 0.021]);
+  }
+  return alongZ(rings, 0x5a3a22, 14, 2);
 }
 
-function buildPistol() {
+function buildPistol(hands = true) {
   const metal = 0x2a2c30, metalL = 0x4a4e54, grip = 0x5a3a22;
   const p = [];
-  p.push(part(new THREE.CylinderGeometry(0.009, 0.009, 0.15, 10), metal, 0, 0.02, -0.1, Math.PI / 2));  // barrel
-  p.push(part(new THREE.BoxGeometry(0.018, 0.012, 0.15), metal, 0, 0.032, -0.1));              // rib
-  p.push(part(new THREE.CylinderGeometry(0.021, 0.021, 0.042, 12), metalL, 0, 0.012, -0.01, Math.PI / 2)); // cylinder
-  p.push(part(new THREE.BoxGeometry(0.024, 0.04, 0.07), metal, 0, 0.01, 0.03));                // frame
-  p.push(part(new THREE.BoxGeometry(0.026, 0.085, 0.035), grip, 0, -0.035, 0.065, -0.3));      // grip
-  p.push(part(new THREE.TorusGeometry(0.014, 0.003, 4, 8, Math.PI), metal, 0, -0.012, 0.025, 0, Math.PI / 2, Math.PI));
-  p.push(part(new THREE.BoxGeometry(0.004, 0.01, 0.006), metal, 0, 0.042, -0.17));             // front sight
-  for (const sx of [-0.0065, 0.0065]) p.push(part(new THREE.BoxGeometry(0.005, 0.012, 0.006), metal, sx, 0.043, 0.035)); // rear notch
-  // hand wrapped around the grip, forearm dropping away below the line of sight
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0, -0.05, 0.072, -0.3, 0, 0, 0.028, 0.042, 0.03), glove));
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.03, 0.04, 0.26, 8), 0.0, -0.2, 0.13, -0.45, 0, 0), sleeve));
+  // barrel, top rib, underlug and ejector rod
+  p.push(cylZ(0.0095, 0.0095, -0.025, -0.172, 0.02, metal, 12));
+  p.push(part(new THREE.BoxGeometry(0.016, 0.008, 0.15), metal, 0, 0.031, -0.1));
+  p.push(part(new THREE.BoxGeometry(0.013, 0.013, 0.13), metal, 0, 0.005, -0.105));
+  p.push(cylZ(0.0035, 0.0035, -0.17, -0.176, 0.005, metalL, 8));
+  // fluted cylinder with chamber mouths
+  p.push(cylZ(0.021, 0.021, 0.012, -0.032, 0.012, metalL, 18));
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    p.push(part(new THREE.BoxGeometry(0.005, 0.005, 0.03), 0x1a1a1c, Math.cos(a) * 0.019, 0.012 + Math.sin(a) * 0.019, -0.01, 0, 0, a));
+    p.push(part(new THREE.CircleGeometry(0.0042, 8), 0x0c0c0e, Math.cos(a + Math.PI / 6) * 0.012, 0.012 + Math.sin(a + Math.PI / 6) * 0.012, -0.0325, 0, Math.PI));
+  }
+  // frame, top strap, hammer, trigger and guard
+  p.push(alongZ([[0.07, 0.012, 0.012, 0.022], [0.012, 0.012, 0.013, 0.024], [0.008, 0.014, 0.012, 0.02]], metal, 12, 4));
+  p.push(part(new THREE.BoxGeometry(0.017, 0.008, 0.07), metal, 0, 0.035, -0.002));
+  p.push(part(new THREE.BoxGeometry(0.008, 0.02, 0.012), metal, 0, 0.036, 0.058, -0.45));
+  p.push(part(new THREE.BoxGeometry(0.009, 0.005, 0.014), metalL, 0, 0.047, 0.07, -0.2));
+  p.push(part(new THREE.TorusGeometry(0.014, 0.003, 6, 12, Math.PI), metal, 0, -0.012, 0.025, 0, Math.PI / 2, Math.PI));
+  p.push(part(new THREE.BoxGeometry(0.0035, 0.018, 0.005), metalL, 0, -0.013, 0.025, 0.3));
+  // wooden grip with checkering and a steel backstrap
+  p.push(loft(curveRings([V3(0, 0.005, 0.058), V3(0, -0.035, 0.068), V3(0, -0.078, 0.086)], (t) => [0.0135 + 0.0015 * t, 0.019 + 0.004 * t], 6), {
+    seg: 12, color: (q, u) => (u > 0.15 && u < 0.88 ? checker(q, 0x3e2816, grip) : grip),
+  }));
+  p.push(tube([[0, 0.012, 0.075], [0, -0.035, 0.088], [0, -0.078, 0.106]], 0.005, 0.005, metal, 6));
+  // sights
+  p.push(part(new THREE.BoxGeometry(0.004, 0.01, 0.006), metal, 0, 0.042, -0.17));
+  for (const sx of [-0.0065, 0.0065]) p.push(part(new THREE.BoxGeometry(0.005, 0.012, 0.006), metal, sx, 0.043, 0.035));
+  if (hands) {
+    // hand wrapped around the grip, forearm dropping away below the line of sight
+    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0, -0.05, 0.072, -0.3, 0, 0, 0.028, 0.042, 0.03), glove));
+    p.push(colorize(xf(new THREE.CylinderGeometry(0.03, 0.04, 0.26, 10), 0.0, -0.2, 0.13, -0.45, 0, 0), sleeve));
+  }
   return mergeColored(p);
 }
 
 // Recurve bow: grip at origin, limbs curve along ±y, string at z = +limb offset
-function buildBow() {
+function buildBow(hands = true) {
   const wood = 0x6a3e22, woodD = 0x4a2a16;
   const p = [];
-  p.push(part(new THREE.BoxGeometry(0.03, 0.12, 0.035), woodD, 0, 0, 0));
+  // riser with leather grip wrap and arrow shelf
+  p.push(loft([-0.075, -0.05, -0.02, 0.02, 0.05, 0.075].map((y) => ({ c: V3(0, y, Math.abs(y) < 0.04 ? 0.004 : 0), rx: 0.015, ry: Math.abs(y) < 0.04 ? 0.02 : 0.017 })), {
+    seg: 12, side: V3(1, 0, 0), color: (q) => (Math.abs(q.y) < 0.04 ? 0x2a1a10 : woodD),
+  }));
+  p.push(part(new THREE.BoxGeometry(0.014, 0.006, 0.026), woodD, -0.01, 0.045, 0.002));
+  // laminated limbs: dark face, light back, curling forward at the tips
   const pts = [[0, 0.06, 0], [0, 0.2, 0.035], [0, 0.34, 0.05], [0, 0.44, 0.02], [0, 0.5, -0.03]];
   for (const sy of [1, -1]) {
-    for (let i = 0; i < pts.length - 1; i++) {
-      const a = new THREE.Vector3(pts[i][0], pts[i][1] * sy, pts[i][2]), b = new THREE.Vector3(pts[i + 1][0], pts[i + 1][1] * sy, pts[i + 1][2]);
-      const len = a.distanceTo(b);
-      const g = new THREE.BoxGeometry(0.022 - i * 0.003, len, 0.012);
-      g.translate(0, len / 2, 0);
-      const m = new THREE.Matrix4().lookAt(a, b, new THREE.Vector3(0, 0, 1));
-      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-      g.applyQuaternion(q); g.translate(a.x, a.y, a.z);
-      void m;
-      p.push(colorize(g, wood));
-    }
+    p.push(loft(curveRings(pts.map(([x, y, z]) => V3(x, y * sy, z)), (t) => [0.021 - 0.012 * t, 0.0075 - 0.003 * t], 14), {
+      seg: 10, side: V3(1, 0, 0), color: (q, u, s) => (s * sy > 0.25 ? woodD : wood),
+    }));
+    p.push(part(new THREE.SphereGeometry(0.006, 8, 6), 0x2a1a10, 0, 0.5 * sy, -0.03)); // string nock
   }
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0, 0, 0.005, 0, 0, 0, 0.04, 0.05, 0.04), glove)); // bow hand
-  p.push(cylinderBetween(new THREE.Vector3(-0.01, -0.03, 0.02), new THREE.Vector3(-0.14, -0.42, 0.55), 0.035, 0.05, 8, sleeve));
+  if (hands) {
+    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0, 0, 0.005, 0, 0, 0, 0.04, 0.05, 0.04), glove)); // bow hand
+    p.push(cylinderBetween(new THREE.Vector3(-0.01, -0.03, 0.02), new THREE.Vector3(-0.14, -0.42, 0.55), 0.035, 0.05, 10, sleeve));
+  }
   return mergeColored(p);
 }
 
 function buildArrow() {
   const p = [];
-  p.push(part(new THREE.CylinderGeometry(0.004, 0.004, 0.7, 5), 0x8a6a40, 0, 0, 0, Math.PI / 2));
-  p.push(part(new THREE.ConeGeometry(0.009, 0.04, 4), 0x9a9a9a, 0, 0, -0.37, -Math.PI / 2, 0, 0));
-  for (let i = 0; i < 3; i++) p.push(part(new THREE.BoxGeometry(0.002, 0.018, 0.07), i ? 0xe8e0d0 : 0xc03020, 0, 0, 0.3, 0, 0, (i * Math.PI * 2) / 3));
+  p.push(part(new THREE.CylinderGeometry(0.004, 0.004, 0.7, 6), 0x8a6a40, 0, 0, 0, Math.PI / 2));
+  // broadhead: ferrule and two crossed blades
+  p.push(part(new THREE.CylinderGeometry(0.0045, 0.004, 0.02, 6), 0x7a7a7a, 0, 0, -0.355, Math.PI / 2));
+  for (const r of [0, Math.PI / 2]) p.push(colorize(xf(new THREE.ConeGeometry(0.012, 0.045, 3), 0, 0, -0.385, -Math.PI / 2, 0, r, 1, 1, 0.15), 0xb0b4b8));
+  // shaped fletching and nock
+  for (let i = 0; i < 3; i++) p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 4), 0, 0, 0.3, 0, 0, (i * Math.PI * 2) / 3, 0.0015, 0.014, 0.04).translate(0, 0, 0), i ? 0xe8e0d0 : 0xc03020));
+  p.push(part(new THREE.CylinderGeometry(0.0048, 0.0048, 0.012, 6), 0xd86a20, 0, 0, 0.356, Math.PI / 2));
   return mergeColored(p);
 }
 
-function buildBinoculars() {
+function buildBinoculars(hands = true) {
   const body = 0x2a2d2a, rubber = 0x3c4436, glass = 0x2a4a66;
   const p = [];
   for (const s of [-1, 1]) {
-    p.push(part(new THREE.CylinderGeometry(0.024, 0.026, 0.13, 12), rubber, s * 0.034, 0, 0, Math.PI / 2));
-    p.push(part(new THREE.CylinderGeometry(0.028, 0.026, 0.03, 12), body, s * 0.034, 0, -0.075, Math.PI / 2));
-    p.push(part(new THREE.CircleGeometry(0.024, 12), glass, s * 0.034, 0, -0.091, 0, Math.PI));
-    p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), s * 0.062, -0.01, 0.0, 0, 0, 0, 0.03, 0.045, 0.055), glove));
-    p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.32, 8), s * 0.12, -0.13, 0.12, -0.8, 0, s * 0.5), sleeve));
+    p.push(loft([[0.065, 0.02], [0.05, 0.024], [-0.04, 0.025], [-0.07, 0.027], [-0.09, 0.028]].map(([z, r]) => ({ c: V3(s * 0.034, 0, z), rx: r, ry: r })), {
+      seg: 16, ySign: -1, color: (q) => (q.z < -0.065 ? body : Math.sin(q.z * 260) > 0.6 ? 0x323a2e : rubber),
+    }));
+    p.push(part(new THREE.TorusGeometry(0.019, 0.006, 8, 16), 0x1a1a1a, s * 0.034, 0, 0.068));      // eyecup
+    p.push(part(new THREE.CircleGeometry(0.024, 16), glass, s * 0.034, 0, -0.091, 0, Math.PI));
+    p.push(part(new THREE.CircleGeometry(0.006, 8), 0x9ac0e0, s * 0.034 + 0.008, 0.008, -0.0915, 0, Math.PI));
+    if (hands) {
+      p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), s * 0.062, -0.01, 0.0, 0, 0, 0, 0.03, 0.045, 0.055), glove));
+      p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.32, 10), s * 0.12, -0.13, 0.12, -0.8, 0, s * 0.5), sleeve));
+    }
   }
-  p.push(part(new THREE.BoxGeometry(0.04, 0.02, 0.07), body, 0, 0.005, 0.0));
+  // hinge bridge and ridged focus wheel
+  p.push(cylZ(0.009, 0.009, 0.05, -0.05, 0.004, body, 10));
+  for (let i = 0; i < 10; i++) p.push(part(new THREE.CylinderGeometry(0.011, 0.011, 0.004, 12), i % 2 ? body : 0x3a3d3a, -0.012 + i * 0.0026, 0.016, 0.03, 0, 0, Math.PI / 2));
   return mergeColored(p);
 }
 
-function buildKnife() {
+function buildKnife(hands = true) {
   const p = [];
-  p.push(part(new THREE.BoxGeometry(0.022, 0.03, 0.11), 0x3a2a1c, 0, 0, 0.02));
+  // drop-point blade, extruded from its outline with bevelled edges
+  const sh = new THREE.Shape();
+  sh.moveTo(0, 0.013); sh.lineTo(0.125, 0.013); sh.quadraticCurveTo(0.165, 0.011, 0.19, -0.004);
+  sh.quadraticCurveTo(0.15, -0.016, 0.06, -0.017); sh.lineTo(0, -0.013); sh.lineTo(0, 0.013);
+  const blade = new THREE.ExtrudeGeometry(sh, { depth: 0.002, bevelEnabled: true, bevelThickness: 0.0016, bevelSize: 0.0014, bevelSegments: 1, curveSegments: 8 });
+  blade.translate(0, 0, -0.001);
+  blade.rotateY(Math.PI / 2);
+  blade.translate(0, 0.006, -0.042);
+  p.push(colorize(blade.toNonIndexed(), 0xc8ccd0));
+  p.push(part(new THREE.BoxGeometry(0.0012, 0.004, 0.1), 0x8a8e92, 0.0024, 0.01, -0.1)); // fuller
+  // guard, grooved handle and pommel
   p.push(part(new THREE.BoxGeometry(0.05, 0.012, 0.012), 0x8a8a8a, 0, 0.004, -0.04));
-  p.push(part(new THREE.BoxGeometry(0.006, 0.032, 0.16), 0xc8ccd0, 0, 0.006, -0.125));
-  p.push(colorize(xf(new THREE.ConeGeometry(0.016, 0.04, 4), 0, 0.006, -0.22, -Math.PI / 2, 0, 0, 0.35, 1, 1), 0xc8ccd0));
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0.006, -0.012, 0.03, 0, 0, 0, 0.04, 0.035, 0.065), glove));
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 8), 0.05, -0.07, 0.17, -1.2, 0, 0.3), sleeve));
+  p.push(alongZ([[0.085, 0, 0.012, 0.016], [0.07, 0, 0.0125, 0.017], [0.05, 0, 0.011, 0.014], [0.03, 0, 0.0125, 0.016], [0.01, 0, 0.011, 0.014], [-0.01, 0, 0.0125, 0.016], [-0.034, 0, 0.011, 0.014]], 0x3a2a1c, 12));
+  p.push(part(new THREE.SphereGeometry(1, 10, 8).scale(0.013, 0.017, 0.012), 0x8a8a8a, 0, 0, 0.09));
+  if (hands) {
+    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0.006, -0.012, 0.03, 0, 0, 0, 0.04, 0.035, 0.065), glove));
+    p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 10), 0.05, -0.07, 0.17, -1.2, 0, 0.3), sleeve));
+  }
   return mergeColored(p);
 }
 
-function buildBaitBag() {
+function buildBaitBag(hands = true) {
   const p = [];
-  p.push(ellipsoid(0, 0, 0, 0.07, 0.09, 0.05, 0xc8a860, 8, 6));
-  p.push(part(new THREE.CylinderGeometry(0.03, 0.05, 0.03, 8), 0xa88848, 0, 0.09, 0));
-  for (let i = 0; i < 6; i++) p.push(ellipsoid(Math.cos(i) * 0.03, 0.105, Math.sin(i) * 0.02, 0.008, 0.008, 0.008, 0xf0c030, 4, 3));
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0.02, -0.03, 0.04, 0, 0, 0, 0.04, 0.045, 0.05), glove));
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 8), 0.06, -0.09, 0.18, -1.2, 0, 0.3), sleeve));
+  p.push(ellipsoid(0, 0, 0, 0.07, 0.09, 0.05, 0xc8a860, 12, 9));
+  p.push(part(new THREE.CylinderGeometry(0.03, 0.05, 0.03, 12), 0xa88848, 0, 0.09, 0));
+  p.push(part(new THREE.TorusGeometry(0.032, 0.004, 6, 12), 0x6a5030, 0, 0.098, 0, Math.PI / 2, 0, 0)); // drawstring
+  for (let i = 0; i < 6; i++) p.push(ellipsoid(Math.cos(i) * 0.03, 0.105, Math.sin(i) * 0.02, 0.008, 0.008, 0.008, 0xf0c030, 5, 4));
+  if (hands) {
+    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0.02, -0.03, 0.04, 0, 0, 0, 0.04, 0.045, 0.05), glove));
+    p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 10), 0.06, -0.09, 0.18, -1.2, 0, 0.3), sleeve));
+  }
   return mergeColored(p);
 }
 
-function buildCall() {
+function buildCall(hands = true) {
   const p = [];
-  p.push(part(new THREE.CylinderGeometry(0.014, 0.018, 0.12, 10), 0x3a2a1c, 0, 0, 0, Math.PI / 2));
-  p.push(part(new THREE.CylinderGeometry(0.02, 0.02, 0.02, 10), 0xc8a050, 0, 0, -0.07, Math.PI / 2));
-  p.push(part(new THREE.CylinderGeometry(0.01, 0.01, 0.12, 6), 0x2a2a2a, 0, -0.005, 0.11, Math.PI / 2));
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0.0, -0.02, 0.0, 0, 0, 0, 0.04, 0.04, 0.05), glove));
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 8), 0.05, -0.08, 0.15, -1.2, 0, 0.3), sleeve));
+  p.push(cylZ(0.014, 0.018, 0.06, -0.06, 0, 0x3a2a1c, 12));
+  p.push(cylZ(0.02, 0.02, -0.06, -0.08, 0, 0xc8a050, 12));
+  p.push(cylZ(0.01, 0.01, 0.06, 0.17, -0.005, 0x2a2a2a, 8));
+  p.push(part(new THREE.TorusGeometry(0.008, 0.002, 4, 10), 0xc8a050, 0, 0.016, 0.02, 0, Math.PI / 2, 0)); // lanyard ring
+  if (hands) {
+    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0.0, -0.02, 0.0, 0, 0, 0, 0.04, 0.04, 0.05), glove));
+    p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 10), 0.05, -0.08, 0.15, -1.2, 0, 0.3), sleeve));
+  }
   return mergeColored(p);
+}
+
+// The same weapons as other players see them: turned to face +z with the grip (or butt) at the origin
+export const VM_COLORS_EXPORT = VM_COLORS;
+export function thirdPersonGeometry(id) {
+  let g;
+  if (id === 'rifle') g = buildRifle();
+  else if (id === 'shotgun') g = mergeColored([buildShotgun(), buildPump().translate(0, -0.008, -0.3)]);
+  else if (id === 'pistol') g = buildPistol(false);
+  else if (id === 'bow') g = buildBow(false);
+  else if (id === 'knife') g = buildKnife(false);
+  else if (id === 'binoculars') g = buildBinoculars(false);
+  else if (id === 'bait') g = buildBaitBag(false);
+  else g = buildCall(false);
+  g.rotateY(Math.PI);
+  const off = { rifle: [0, 0, 0.458], shotgun: [0, 0, 0.462], pistol: [0, 0.035, 0.065], knife: [0, 0, 0.02] }[id];
+  if (off) g.translate(...off);
+  return g;
 }
 
 function flashTexture() {
@@ -219,8 +352,11 @@ export class Equipment {
     this.vmHemi = new THREE.HemisphereLight(0xffffff, 0x444033, 1.2);
     this.vmSun = new THREE.DirectionalLight(0xffffff, 1.6);
     this.vmSun.position.set(0.5, 1, 0.3);
-    this.vmScene.add(this.vmHemi, this.vmSun);
-    const mat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 40, specular: 0x222222 });
+    // soft fill from the viewer's side so the near faces of the weapon are not lost in shadow
+    this.vmFill = new THREE.DirectionalLight(0xfff4e8, 0.8);
+    this.vmFill.position.set(-0.6, 0.35, 1);
+    this.vmScene.add(this.vmHemi, this.vmSun, this.vmFill);
+    const mat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 55, specular: 0x4a4a4a });
     const group = (...meshes) => { const g = new THREE.Group(); meshes.forEach((m) => g.add(m)); g.visible = false; this.vmScene.add(g); return g; };
     const flash = (z, y, s) => {
       const f = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
@@ -451,6 +587,7 @@ export class Equipment {
     const li = 0.12 + env.daylight * 0.9 * env.w.light;
     this.vmHemi.intensity = 0.35 + li * 1.6;
     this.vmSun.intensity = li * 2.4;
+    this.vmFill.intensity = 0.25 + li * 0.9;
     this.vmHemi.color.copy(env.hemi.color);
     const bob = P.bobAmt;
     const bx = Math.cos(P.bobT) * 0.012 * bob, by = Math.abs(Math.sin(P.bobT)) * 0.012 * bob;

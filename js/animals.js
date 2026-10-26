@@ -1159,6 +1159,7 @@ export class AnimalManager {
         a.syncTransform(); a.animate(dt, cd);
       }
       a.rig.root.visible = cd < (a.sp.model.shoulderH < 0.45 ? Math.min(viewDist, 140) : viewDist);
+      a.rig.setLod(cd > 60 ? 1 : 0);
     }
   }
 
@@ -1174,6 +1175,7 @@ export class AnimalManager {
       const cd = Math.hypot(a.pos.x - cam.x, a.pos.z - cam.z);
       a.update(dt, cd);
       a.rig.root.visible = cd < (a.sp.model.shoulderH < 0.45 ? Math.min(viewDist, 140) : viewDist);
+      a.rig.setLod(cd > 60 ? 1 : 0);
     }
     // Population maintenance
     this.popTimer -= dt;

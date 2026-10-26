@@ -1,6 +1,7 @@
 // Instanced, chunked vegetation (trees, bushes, rocks, grass, flowers) + spatial hash for collisions.
 import * as THREE from 'three';
 import { enhanceShader, SurfaceDetail } from './surface.js';
+import { buildFoliage } from './foliage.js';
 import { colorize, mergeColored, xf, jitterVertices, shadeVertical } from './geo.js';
 import { mulberry32, smoothstep, noise2 } from './utils.js';
 import { HALF, riverDistance, MEADOWS } from './terrain.js';
@@ -388,7 +389,12 @@ export class Vegetation {
     this.fernMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.fernMat.userData.noDetail = true;
     addSway(this.fernMat, 0.06, this.uniforms);
-    this.hiDist = quality.shadows ? 12 : -1e9; // no detailed trees on the low setting
+    this.hiDist = !quality.shadows ? -1e9 : quality.grass >= 1 ? 30 : 12; // none on Low, furthest on High
+    // leafy cards on the detailed trees and bushes (they flutter a little more than the branches)
+    const F = buildFoliage();
+    this.cardGeos = F.geos;
+    this.leafMat = F.leafMat; this.needleMat = F.needleMat; this.bushLeafMat = F.leafMat.clone();
+    for (const [m, k] of [[this.leafMat, 0.02], [this.needleMat, 0.014], [this.bushLeafMat, 0.045]]) { m.userData.detailKind = 'foliage'; addSway(m, k, this.uniforms); }
     this.grassGeo = makeGrassTuft(rng);
     this.flowerGeo = makeFlower();
 
@@ -514,8 +520,22 @@ export class Vegetation {
       mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
       this.scene.add(mesh);
+      let cards = null;
+      const cg = this.cardGeos && this.cardGeos[b.type];
+      if (cg) {
+        cards = new THREE.InstancedMesh(cg, b.type === 'pine' ? this.needleMat : b.type === 'bush' ? this.bushLeafMat : this.leafMat, b.items.length);
+        cards.instanceMatrix.array.set(mesh.instanceMatrix.array);
+        cards.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) cards.instanceColor = mesh.instanceColor;
+        cards.computeBoundingSphere();
+        cards.castShadow = b.type !== 'bush';
+        cards.receiveShadow = true;
+        cards.matrixAutoUpdate = false;
+        cards.visible = false;
+        this.scene.add(cards);
+      }
       this.chunks.push({
-        mesh, type: b.type, hi: false,
+        mesh, cards, type: b.type, hi: false,
         x: -HALF + (b.cx + 0.5) * CHUNK, z: -HALF + (b.cz + 0.5) * CHUNK,
         small: b.type === 'bush' || b.type === 'rock' || b.type === 'fern' || b.type === 'log' || b.type === 'stump',
       });
@@ -590,9 +610,9 @@ export class Vegetation {
       for (let i = 0; i < mesh.instanceMatrix.count; i++) {
         mesh.getMatrixAt(i, m4);
         m4.decompose(p, q, sc);
-        if (Math.hypot(p.x - x, p.z - z) < r) { mesh.setMatrixAt(i, zero); changed = true; }
+        if (Math.hypot(p.x - x, p.z - z) < r) { mesh.setMatrixAt(i, zero); if (c.cards) c.cards.setMatrixAt(i, zero); changed = true; }
       }
-      if (changed) mesh.instanceMatrix.needsUpdate = true;
+      if (changed) { mesh.instanceMatrix.needsUpdate = true; if (c.cards) c.cards.instanceMatrix.needsUpdate = true; }
     }
     for (const [k, arr] of this.hash) this.hash.set(k, arr.filter((it) => Math.hypot(it.x - x, it.z - z) >= r));
     this.bushes = this.bushes.filter((b) => Math.hypot(b.x - x, b.z - z) >= r);
@@ -611,6 +631,7 @@ export class Vegetation {
       c.mesh.visible = d < (c.type === 'fern' ? 40 : c.small ? viewDist * 0.6 : viewDist);
       const hi = d < this.hiDist;
       if (hi !== c.hi) { c.hi = hi; c.mesh.geometry = hi ? this.geosHi[c.type] : this.geos[c.type]; }
+      if (c.cards) c.cards.visible = c.mesh.visible && hi;
     }
     const gd = 75;
     for (const g of this.grassChunks) {

@@ -4,6 +4,8 @@ import { Terrain, riverX, LAKE } from './terrain.js';
 import { Vegetation } from './vegetation.js';
 import { Environment } from './environment.js';
 import { colorize, mergeColored, xf, cylinderBetween, ellipsoid } from './geo.js';
+import { Avatar } from './avatar.js';
+import { decorateCabin, decorateStore } from './buildings.js';
 
 export const LOCATIONS = [
   { name: 'Cabin Clearing', x: -40, z: -54, desc: 'Starting point and campfire' },
@@ -18,8 +20,14 @@ export const LOCATIONS = [
   { name: 'Pine Ridge', x: -150, z: -130, desc: 'High ground, dense pines — wolf country' },
   { name: 'Hollow Glade', x: 95, z: -150, desc: 'Damp forest — boar rooting grounds' },
   { name: 'South Glade', x: -15, z: 150, desc: 'Sunny clearing in the southern woods' },
+  { name: 'Ridge Outpost', x: 108, z: -132, desc: 'Meat market and supply store in the far east' },
+  { name: 'Lakeside Outpost', x: -138, z: 158, desc: 'Gun shop and supply store south of the lake' },
 ];
 
+
+// Homestead cabins scattered around the map. In PvP each player gets one as their house
+// (the host gets the starting cabin); otherwise they are empty cabins with a bed.
+export const HOMESTEADS = [[-150, 10], [20, 150], [40, -65], [155, 80], [-160, -135], [-20, 80]];
 
 export class World {
   constructor(scene, quality) {
@@ -43,11 +51,79 @@ export class World {
     // a small hunting hut with its own fire on the east side of the river
     this.buildCabin(122, 36, 4.6, 4.0, 'the meadow hut');
     this.buildCampfire(118.5, 42.5);
+    // two outposts with more stores, far from town
+    this.buildOutpost(108, -140, 'Ridge Outpost', [['butcher', 'butcher2'], ['general', 'general2']]);
+    this.buildOutpost(-138, 150, 'Lakeside Outpost', [['gun', 'gun2'], ['general', 'general3']]);
+    // homesteads; houses[0] is the starting cabin
+    this.houses = [this.cabins.find((c) => c.home)];
+    HOMESTEADS.forEach(([hx, hz], i) => {
+      this.buildCabin(hx, hz, 5.2, 4.4, 'the homestead');
+      const c = this.cabins[this.cabins.length - 1];
+      c.homestead = i + 1;
+      this.houses.push(c);
+    });
+    this.buildPois();
     this.terrain.finishEdits();
+    this.env.setWaterDepth(this.terrain);
+    // soft shade on the ground under trees, around rocks and buildings
+    const spots = [];
+    for (const arr of this.veg.hash.values()) for (const it of arr) {
+      if (it.kind === 'tree') spots.push({ x: it.x, z: it.z, r: Math.max(2.5, it.h * 0.55), k: 0.22 });
+      else if (it.kind === 'rock') spots.push({ x: it.x, z: it.z, r: it.r * 1.8, k: 0.18 });
+    }
+    for (const c of this.cabins) spots.push({ x: c.x, z: c.z, r: Math.max(c.W, c.D) * 0.85, k: 0.2 });
+    this.terrain.bakeShade(spots);
     // one shared light for the nearest lit fire and one for the nearest cabin lantern
     this.fireLight = new THREE.PointLight(0xff8a40, 0, 16, 1.8);
     this.lanternLight = new THREE.PointLight(0xffc070, 0, 11, 1.3);
     scene.add(this.fireLight, this.lanternLight);
+  }
+
+  // Places worth marking on the map (icons on the minimap and the big map)
+  buildPois() {
+    const P = this.pois = [];
+    for (const c of this.cabins) {
+      if (c.store) continue;
+      if (c.home) P.push({ kind: 'home', x: c.x, z: c.z, label: 'Your cabin', house: 0 });
+      else if (c.homestead) P.push({ kind: 'homestead', x: c.x, z: c.z, label: 'Homestead', house: c.homestead });
+      else P.push({ kind: 'hut', x: c.x, z: c.z, label: 'Meadow hut' });
+    }
+    for (const st of this.stores) P.push({ kind: st.id, x: st.geom.x, z: st.geom.z, label: st.title, store: st });
+    P.push({ kind: 'stand', x: -56, z: -35, label: 'Hunting stand' });
+  }
+
+  // A small outpost: two storefronts facing each other across a levelled yard, a lamp post
+  // and a signpost. stores: [[store id, look]]
+  buildOutpost(cx, cz, name, stores) {
+    const h = this.terrain.averageHeight(cx, cz, 12);
+    this.terrain.flatten(cx, cz, 19, 28, h);
+    this.veg.clearArea(cx, cz, 28);
+    this.buildStore(stores[0][0], cx - 13, cz, Math.PI / 2, h, stores[0][1]);
+    this.buildStore(stores[1][0], cx + 13, cz, -Math.PI / 2, h, stores[1][1]);
+    const P = [];
+    const wood = 0x6e5034;
+    P.push(colorize(xf(new THREE.CylinderGeometry(0.06, 0.08, 3.2, 6), 0, 1.6, -4), 0x2a2a2a));
+    P.push(colorize(xf(new THREE.BoxGeometry(0.5, 0.06, 0.06), 0.2, 3.15, -4), 0x2a2a2a));
+    // signpost with the outpost's name board
+    P.push(colorize(xf(new THREE.BoxGeometry(0.14, 2.2, 0.14), 0, 1.1, 5), wood));
+    P.push(colorize(xf(new THREE.BoxGeometry(1.9, 0.5, 0.06), 0, 1.95, 5), 0x5a4028));
+    for (const [bx, bz] of [[2.5, 3], [3.1, 3.5], [-3, -2.5]]) P.push(colorize(xf(new THREE.CylinderGeometry(0.32, 0.36, 0.9, 10), bx, 0.45, bz), 0x8a6238));
+    const deco = new THREE.Mesh(mergeColored(P), new THREE.MeshLambertMaterial({ vertexColors: true }));
+    deco.position.set(cx, h, cz);
+    deco.castShadow = true;
+    this.scene.add(deco);
+    for (const s of [1, -1]) {
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.42), new THREE.MeshLambertMaterial({ map: signTexture(name.toUpperCase(), 0xd8b070) }));
+      sign.position.set(cx, h + 1.95, cz + 5 + s * 0.035);
+      if (s < 0) sign.rotation.y = Math.PI;
+      this.scene.add(sign);
+    }
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd080 }));
+    lamp.position.set(cx + 0.42, h + 3.0, cz - 4);
+    this.scene.add(lamp);
+    this.lanterns.push({ x: cx + 0.42, y: h + 2.9, z: cz - 4 });
+    this.addBox(cx, cz + 5, 0.1, 0.1, h - 1, h + 2.3);
+    (this.outposts = this.outposts || []).push({ x: cx, z: cz, name });
   }
 
   addBox(cx, cz, hw, hd, y0, y1) {
@@ -105,13 +181,14 @@ export class World {
       for (const off of [0.14, -0.14]) box(0.03, 0.75, 0.95, s * (W / 2 + off), 1.45, -0.3, 0x2a3a44);
       box(0.06, 0.9, 1.1, s * (W / 2 + 0.16), 1.45, -0.3, woodL);
     }
-    // roof: two sloped boards, gables, beams
+    // roof: two sloped boards and gables (a separate mesh, so a lodge storey can replace it)
+    const R = [];
     const run = D / 2 + 0.45, slope = Math.atan2(rh, run), bl = Math.hypot(run, rh) + 0.1;
-    for (const s of [-1, 1]) box(W + 0.9, 0.12, bl, 0, H + rh / 2 + 0.05, s * run / 2, 0x3b3632, 0, s * slope);
+    for (const s of [-1, 1]) R.push(colorize(xf(new THREE.BoxGeometry(W + 0.9, 0.12, bl), 0, H + rh / 2 + 0.05, s * run / 2, s * slope, 0, 0), 0x3b3632));
     const tri = new THREE.BufferGeometry();
     tri.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, -D / 2, 0, 0, D / 2, 0, rh, 0], 3));
     tri.computeVertexNormals();
-    for (const s of [-1, 1]) { const g = tri.clone(); g.translate(s * (W / 2 - 0.02), H, 0); P.push(colorize(g, 0x6e5034)); }
+    for (const s of [-1, 1]) { const g = tri.clone(); g.translate(s * (W / 2 - 0.02), H, 0); R.push(colorize(g, 0x6e5034)); }
     for (const bz of [-D / 4, D / 4]) log(W - 0.3, 0, H - 0.08, bz, true, woodD);
     // ---- interior ----
     const bx = -W / 2 + t + 0.55, bz = -D / 2 + t + 1.05;
@@ -167,6 +244,10 @@ export class World {
     mesh.position.set(x, floor, z);
     mesh.castShadow = true; mesh.receiveShadow = true;
     this.scene.add(mesh);
+    const roof = new THREE.Mesh(mergeColored(R), mesh.material);
+    roof.position.copy(mesh.position);
+    roof.castShadow = true; roof.receiveShadow = true;
+    this.scene.add(roof);
     // glowing lantern glass
     const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.14, 8), new THREE.MeshBasicMaterial({ color: 0xffc860 }));
     glass.position.set(x + tx + 0.15, floor + 0.88, z + tz - 0.1);
@@ -206,8 +287,9 @@ export class World {
       x: x + dx, z: zf,
       box: { minX: x + dx - dw / 2, maxX: x + dx + dw / 2, minZ: zf - t / 2, maxZ: zf + t / 2, minY: y0, maxY: y1 },
     });
-    this.cabins.push({ x, z, W, D, floor, name, door: this.doors[this.doors.length - 1], home: !!opts.home });
-    if (opts.home) this.home = { x, z, W, D, floor, t, H, rh, dx, dw, dh, stove, bx, bz, tx, tz, name, door: this.doors[this.doors.length - 1] };
+    this.cabins.push({ x, z, W, D, floor, name, door: this.doors[this.doors.length - 1], home: !!opts.home, H, rh, dx, dw, dh, t, stove, lo, roof });
+    this.cabins[this.cabins.length - 1].deco = decorateCabin(this, this.cabins[this.cabins.length - 1]);
+    if (opts.home) this.home = { x, z, W, D, floor, t, H, rh, dx, dw, dh, stove, bx, bz, tx, tz, name, door: this.doors[this.doors.length - 1], cabin: this.cabins[this.cabins.length - 1] };
   }
 
   // A small frontier street: three enterable storefronts around a levelled square.
@@ -239,9 +321,9 @@ export class World {
 
   // Storefront with a false-front facade, porch, door, windows, counter and vendor inside.
   // Built in local space (front faces +z) and rotated by rot.
-  buildStore(id, x, z, rot, ground) {
+  buildStore(id, x, z, rot, ground, lookId = id) {
     const W = 8, D = 7, t = 0.2, H = 3.4, FH = 5.4, dw = 1.3, dh = 2.3;
-    const look = STORE_LOOK[id];
+    const look = STORE_LOOK[lookId];
     const floor = ground + 0.35;
     const c = Math.cos(rot), s = Math.sin(rot);
     const toW = (lx, lz) => [x + lx * c + lz * s, z - lx * s + lz * c];
@@ -372,11 +454,16 @@ export class World {
     this.scene.add(sign);
 
     // vendor behind the counter, facing the door
-    const v = new THREE.Mesh(vendorGeometry(look.apron), new THREE.MeshLambertMaterial({ vertexColors: true }));
+    // the shopkeeper: a full character in a work apron, hands resting on the counter
+    const av = new Avatar(look.keeper);
+    av.setApron(look.apronCol, look.stripe || null);
+    av.restHands = [0.19, 1.1, 0.46];
+    av.update(0.1, { pitch: 0, aim: 0, draw: 0, item: 'none', moving: false, crouch: false, dead: false, swimming: false });
+    const v = av.root;
+    v.userData.avatar = av;
     const [vx, vz] = toW(-0.4, cz - 0.85);
     v.position.set(vx, floor + 0.03, vz);
     v.rotation.y = rot;
-    v.castShadow = true;
     this.scene.add(v);
 
     // colliders and floors
@@ -395,8 +482,9 @@ export class World {
 
     // where the player stands to trade: in front of the counter
     const [ix, iz] = toW(-0.4, cz + 1.1);
-    const st = { id, x: ix, z: iz, vendor: v, base: floor, door, closed: false, bounds: { x, z, hw: (swap ? D : W) / 2, hd: (swap ? W : D) / 2 } };
+    const st = { id, title: look.title, guard: look.guard, x: ix, z: iz, vendor: v, vendorRot: rot, base: floor, door, closed: false, threat: 0, geom: { x, z, rot, W, D, H, FH, floor, look, dw, dh, t }, bounds: { x, z, hw: (swap ? D : W) / 2, hd: (swap ? W : D) / 2 } };
     door.store = st;
+    decorateStore(this, st);
     this.stores.push(st);
     this.cabins.push({ x, z, W: swap ? D : W, D: swap ? W : D, floor, store: true });
   }
@@ -405,10 +493,43 @@ export class World {
 
   // Stores open 09:00–21:00. After hours the shopkeeper goes home and the door is locked
   // (once you have left — you can always let yourself out).
-  updateStores(time, px, pz) {
+  updateStores(time, px, pz, ey = 0) {
     const open = time >= 9 && time < 21;
+    const now = performance.now() / 1000, dt = Math.min(0.1, now - (this._storeT || now));
+    this._storeT = now;
     for (const st of this.stores) {
       const inside = this.isInside(st.bounds, px, pz);
+      const av = st.vendor.userData.avatar;
+      if (av && st.vendor.visible) {
+        let want = st.vendorRot, pitch = 0, lookYaw = 0;
+        // shopkeepers keep busy when nobody is in: wiping the counter, hands on hips, looking
+        // around; when you walk in they wave, then lean on the counter and watch you
+        const job = st.job || (st.job = { kind: 'counter', t: 0, dur: 4 });
+        if (inside && !st.wasInside) Object.assign(job, { kind: 'wave', t: 0, dur: 1.7 });
+        st.wasInside = inside;
+        job.t += dt;
+        if (job.t > job.dur) Object.assign(job, inside ? { kind: 'counter', t: 0, dur: 1e9 } : { kind: ['wipe', 'look', 'hips', 'counter', 'wipe'][Math.floor(Math.random() * 5)], t: 0, dur: 5 + Math.random() * 5 });
+        const T = job.t;
+        av.handPose = null;
+        if (job.kind === 'wipe') { av.handPose = { R: [0.1 + Math.sin(T * 3.6) * 0.17, 1.1, 0.5 + Math.cos(T * 3.6) * 0.06] }; pitch = -0.35; lookYaw = -0.15; }
+        else if (job.kind === 'hips') av.handPose = { R: [0.3, 1.0, 0.03], L: [-0.3, 1.0, 0.03] };
+        else if (job.kind === 'look') lookYaw = Math.sin(T * 0.7) * 0.75;
+        else if (job.kind === 'wave') av.handPose = { R: [0.34 + Math.sin(T * 11) * 0.07, 1.72, 0.18] };
+        st.threat = Math.max(0, st.threat - dt);
+        const drawn = st.threat > 0;
+        if (inside || drawn) {
+          const dx = px - st.vendor.position.x, dz = pz - st.vendor.position.z;
+          let d = Math.atan2(dx, dz) - st.vendorRot;
+          d = Math.atan2(Math.sin(d), Math.cos(d));
+          const lim = drawn ? 1.4 : 0.7;
+          want = st.vendorRot + Math.max(-lim, Math.min(lim, d));
+          lookYaw = drawn ? 0 : Math.max(-0.5, Math.min(0.5, d - (want - st.vendorRot)));
+          pitch = drawn ? Math.atan2(ey - (st.base + 1.45), Math.max(0.5, Math.hypot(dx, dz))) : -0.08;
+        }
+        if (drawn) av.handPose = null;
+        st.vendor.rotation.y += (want - st.vendor.rotation.y) * (drawn ? 0.3 : 0.08);
+        av.update(dt || 0.016, { pitch, lookYaw, aim: drawn ? 1 : 0, draw: 0, item: drawn ? st.guard : 'none', moving: false, crouch: false, dead: false, swimming: false });
+      }
       if (open) { st.closed = false; st.vendor.visible = true; continue; }
       st.closed = true;
       if (!inside) {
@@ -675,9 +796,13 @@ function rayBox(o, d, b) {
 
 
 const STORE_LOOK = {
-  gun: { sign: 'GUNSMITH', roof: 0x3a3632, wall: 0x6a5a48, trim: 0x2e2a24, apron: 0x3a4a3a, signColor: 0x9a2a1e },
-  butcher: { sign: 'BUTCHER', roof: 0x4a2a24, wall: 0x8a3a2e, trim: 0xe8dcc4, apron: 0xe8e2d6, signColor: 0xe8dcc4 },
-  general: { sign: 'GENERAL STORE', roof: 0x2e3a32, wall: 0x6e7e6a, trim: 0xe0d8c0, apron: 0x8a6a3a, signColor: 0xc8a040 },
+  gun: { keeper: { jacket: 'red', hat: 'cowboy', hatColor: 'brown', skin: '3', pants: 'jeans', hair: 'gray', beard: 'full', pack: 'no' }, apronCol: 0x6a4a2e, title: 'Gunsmith', guard: 'rifle', sign: 'GUNSMITH', roof: 0x3a3632, wall: 0x6a5a48, trim: 0x2e2a24, apron: 0x3a4a3a, signColor: 0x9a2a1e },
+  butcher: { keeper: { jacket: 'blue', hat: 'none', skin: '1', pants: 'black', hair: 'black', beard: 'stubble', pack: 'no' }, apronCol: 0xf0ece4, stripe: 0x3a5a8a, title: 'Butcher', guard: 'shotgun', sign: 'BUTCHER', roof: 0x4a2a24, wall: 0x8a3a2e, trim: 0xe8dcc4, apron: 0xe8e2d6, signColor: 0xe8dcc4 },
+  general: { keeper: { jacket: 'green', hat: 'cap', hatColor: 'brown', skin: '4', pants: 'khaki', hair: 'brown', beard: 'none', pack: 'no' }, apronCol: 0xb89a6a, title: 'General store', guard: 'pistol', sign: 'GENERAL STORE', roof: 0x2e3a32, wall: 0x6e7e6a, trim: 0xe0d8c0, apron: 0x8a6a3a, signColor: 0xc8a040 },
+  gun2: { keeper: { jacket: 'black', hat: 'bucket', hatColor: 'olive', skin: '5', pants: 'olive', hair: 'black', beard: 'none', pack: 'no' }, apronCol: 0x4a3a2a, title: 'Lakeside gun shop', guard: 'rifle', sign: 'GUNS & AMMO', roof: 0x2e2e30, wall: 0x5a4636, trim: 0xc8b890, apron: 0x3a3a3a, signColor: 0xd8a030 },
+  butcher2: { keeper: { jacket: 'yellow', hat: 'beanie', hatColor: 'white', skin: '2', pants: 'jeans', hair: 'red', beard: 'full', pack: 'no' }, apronCol: 0xf0ece4, stripe: 0x9a3030, title: 'Ridge meat market', guard: 'shotgun', sign: 'MEAT MARKET', roof: 0x3a2a22, wall: 0x9a6a3a, trim: 0xf0e6d0, apron: 0xe8e2d6, signColor: 0xb83a30, awning: 0xb83a30 },
+  general2: { keeper: { jacket: 'purple', hat: 'cowboy', hatColor: 'black', skin: '3', pants: 'black', hair: 'blonde', beard: 'stubble', pack: 'no' }, apronCol: 0x6a5a4a, title: 'Ridge supply co.', guard: 'pistol', sign: 'SUPPLY CO.', roof: 0x2a3238, wall: 0x5a6e7e, trim: 0xe8e0d0, apron: 0x6a5a4a, signColor: 0x4a8ac8, awning: 0x2f5a8a },
+  general3: { keeper: { jacket: 'camo', hat: 'cap', hatColor: 'orange', skin: '1', pants: 'khaki', hair: 'gray', beard: 'full', pack: 'no' }, apronCol: 0x8a7a5a, title: 'Lakeside trading post', guard: 'pistol', sign: 'TRADING POST', roof: 0x3a3226, wall: 0x7a6a4e, trim: 0xe0d4b4, apron: 0x8a7a5a, signColor: 0x6a9a4a, awning: 0x4a7a3a },
 };
 
 function signTexture(text, color) {
@@ -695,14 +820,3 @@ function signTexture(text, color) {
   return tex;
 }
 
-function vendorGeometry(apron) {
-  const p = [];
-  p.push(colorize(xf(new THREE.BoxGeometry(0.34, 0.85, 0.2), 0, 0.45, 0), 0x3a3428));          // legs
-  p.push(colorize(xf(new THREE.BoxGeometry(0.44, 0.6, 0.26), 0, 1.17, 0), 0x6a5a4a));          // shirt
-  p.push(colorize(xf(new THREE.BoxGeometry(0.4, 0.75, 0.04), 0, 1.0, 0.14), apron));           // apron
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0, 1.6, 0.02, 0, 0, 0, 0.11, 0.13, 0.12), 0xc49a7a));
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.14, 0.14, 0.05, 10), 0, 1.72, 0), 0x4a3a2a)); // hat brim
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.1, 0.11, 0.12, 10), 0, 1.79, 0), 0x4a3a2a));
-  for (const s of [-1, 1]) p.push(colorize(xf(new THREE.CylinderGeometry(0.05, 0.05, 0.55, 6), s * 0.27, 1.12, 0.1, 0.5, 0, 0), 0x6a5a4a));
-  return mergeColored(p);
-}

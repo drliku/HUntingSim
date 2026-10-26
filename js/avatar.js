@@ -85,6 +85,7 @@ const POSE = {
   binoculars: { aim: [[0, 0.22, 0.17], [0, 0, 0]], low: [[0, -0.24, 0.17], [0.4, 0, 0]], R: [0.05, -0.01, 0], L: [-0.05, -0.01, 0], handsAimOnly: true },
   bait: { aim: [[0.24, -0.58, 0.14], [0.3, 0, 0]], low: [[0.24, -0.58, 0.14], [0.3, 0, 0]], R: [0, 0.02, 0] },
   call: { aim: [[0.24, -0.58, 0.14], [0.3, 0, 0]], low: [[0.24, -0.58, 0.14], [0.3, 0, 0]], R: [0, 0.0, 0.0] },
+  none: { aim: [[0, -0.5, 0.2], [0, 0, 0]], low: [[0, -0.5, 0.2], [0, 0, 0]], R: null, L: null },
 };
 const SHOULDER_Y = 1.46;
 const HIP_Y = 0.95, THIGH = 0.45, SHIN = 0.42;
@@ -102,9 +103,14 @@ const JOINT = new THREE.SphereGeometry(1, 10, 8);
 // gloved hand: palm, fingers and thumb; the wrist is at the origin and the fingers point along +y
 const HAND_GEO = (() => {
   const p = [];
-  p.push(ellipsoid(0, 0.035, 0, 0.034, 0.042, 0.022, 0xffffff, 10, 8));
-  p.push(ellipsoid(0, 0.08, 0.004, 0.03, 0.03, 0.019, 0xffffff, 8, 6));
-  p.push(ellipsoid(-0.03, 0.04, 0.012, 0.012, 0.026, 0.012, 0xffffff, 6, 5, 0, 0, 0.5));
+  p.push(ellipsoid(0, 0.038, 0, 0.033, 0.04, 0.017, 0xffffff, 12, 9));
+  for (let k = 0; k < 4; k++) {
+    const x = -0.021 + k * 0.014, len = [0.036, 0.04, 0.038, 0.03][k];
+    p.push(cylinderBetween(new THREE.Vector3(x, 0.072, 0.002), new THREE.Vector3(x, 0.072 + len * 0.6, 0.008), 0.0072, 0.0066, 6, 0xffffff));
+    p.push(cylinderBetween(new THREE.Vector3(x, 0.072 + len * 0.6, 0.008), new THREE.Vector3(x, 0.072 + len * 0.95, 0.022), 0.0066, 0.0058, 6, 0xffffff));
+    p.push(ellipsoid(x, 0.072, 0.002, 0.0078, 0.0078, 0.0078, 0xffffff, 6, 5));
+  }
+  p.push(cylinderBetween(new THREE.Vector3(-0.026, 0.03, 0.006), new THREE.Vector3(-0.04, 0.062, 0.02), 0.009, 0.0075, 6, 0xffffff));
   return mergeColored(p);
 })();
 
@@ -306,6 +312,7 @@ export class Avatar {
     this.item = id;
     this.itemTier = tier;
     for (const k in this.items) this.items[k].visible = false;
+    if (id === 'none') return;
     if (!this.items[id]) {
       const g = new THREE.Group();
       const mesh = new THREE.Mesh(tieredGeometry(id, tier), vcMat);
@@ -323,6 +330,22 @@ export class Avatar {
 
   fire() { this.flashT = 0.06; this.kick = 1; }
 
+  // a work apron over the clothes (shopkeepers); stripe: optional pinstripe colour
+  setApron(color, stripe = null) {
+    if (this.apron) { this.body.remove(this.apron); this.apron.geometry.dispose(); }
+    const p = [];
+    const plate = (w, h, y, z, c) => p.push(box(w, h, 0.016, 0, y, z, c));
+    plate(0.4, 0.56, 1.06, 0.142, color);
+    plate(0.27, 0.27, 1.42, 0.15, color);
+    if (stripe) for (let x = -0.18; x <= 0.18; x += 0.045) p.push(box(0.008, 0.82, 0.018, x, 1.16, 0.149, stripe));
+    p.push(box(0.42, 0.04, 0.02, 0, 1.08, 0.152, color === 0xf0ece4 ? 0xcfc8bc : color)); // waist tie
+    p.push(box(0.11, 0.09, 0.02, 0.1, 0.98, 0.153, color)); // pocket
+    for (const s of [-1, 1]) p.push(cylinderBetween(new THREE.Vector3(s * 0.12, 1.55, 0.15), new THREE.Vector3(s * 0.06, 1.62, 0.02), 0.008, 0.008, 5, color)); // neck strap
+    this.apron = new THREE.Mesh(mergeColored(p), vcMat);
+    this.apron.castShadow = true;
+    this.body.add(this.apron);
+  }
+
   // state: { pitch, aim (0..1), draw (0..1), item, moving, crouch, dead, swimming, dt }
   update(dt, s) {
     this.setItem(s.item, s.tier || 0);
@@ -332,7 +355,13 @@ export class Avatar {
     this.kick = Math.max(0, this.kick - dt * 6);
     this.crouchAmt += ((s.crouch && !s.dead ? 1 : 0) - this.crouchAmt) * Math.min(1, dt * 10);
     const cr = this.crouchAmt;
-    this.body.position.y = -0.32 * cr;
+    this.life = (this.life || Math.random() * 10) + dt;
+    // breathing lifts the chest a little; walking swings the shoulders against the hips
+    this.body.position.y = -0.32 * cr + (s.dead ? 0 : Math.sin(this.life * 1.7) * 0.004);
+    this.body.rotation.y = s.moving && !s.dead && !s.swimming ? Math.sin(this.phase) * 0.06 : 0;
+    // the head turns to look around when told to (shopkeepers), or glances about when idle
+    const idleLook = !s.moving && !s.dead && (s.aim || 0) < 0.1 ? Math.sin(this.life * 0.37) * 0.25 * Math.max(0, Math.sin(this.life * 0.13)) : 0;
+    this.lookYaw = (this.lookYaw || 0) + ((s.lookYaw !== undefined ? s.lookYaw : idleLook) - (this.lookYaw || 0)) * Math.min(1, dt * 4);
     this.phase += s.moving ? dt * (s.crouch ? 6 : 9) : 0;
     // legs: swing from the hip, bend the knee on the back swing; crouching folds both joints
     for (const L of this.legs) {
@@ -345,7 +374,8 @@ export class Avatar {
       L.knee.rotation.x = lift * 0.75 + 1.75 * cr;
     }
     this.aimGroup.rotation.x = -this.pitch;
-    this.weapon.visible = !s.swimming && !s.dead;
+    this.aimGroup.rotation.y = this.lookYaw;
+    this.weapon.visible = !s.swimming && !s.dead && this.item !== 'none';
 
     // weapon placement: blend the carry pose with the aim pose (which follows the view)
     const P = POSE[this.item], a = this.aimAmt;
@@ -371,7 +401,7 @@ export class Avatar {
       this.arrow.position.copy(nock);
       this.arrow.quaternion.setFromUnitVectors(UP, new THREE.Vector3(0, 0, 1));
     }
-    const fl = this.items[this.item].flash;
+    const fl = this.items[this.item] && this.items[this.item].flash;
     if (fl) { fl.visible = this.flashT > 0; this.flashT -= dt; }
 
     // arms reach for the grip points, bending at the elbow
@@ -384,8 +414,13 @@ export class Avatar {
       if (P.handsAimOnly) w = a;
       if (s.swimming || s.dead) w = 0;
       const rest = _p2.set(arm.side * 0.25, 0.9, 0.06 + (s.moving ? Math.sin(this.phase + (right ? Math.PI : 0)) * 0.12 : 0));
+      if (this.restHands) rest.set(arm.side * this.restHands[0], this.restHands[1], this.restHands[2]);
+      const hp = this.handPose && this.handPose[right ? 'R' : 'L'];
+      if (hp) rest.fromArray(hp);
       if (s.swimming) rest.set(arm.side * 0.45, 1.25, 0.25 + Math.sin(this.phase + arm.side) * 0.2);
       if (grip) { _hand.fromArray(grip).applyMatrix4(this.weapon.matrix); _hand.lerpVectors(rest, _hand, w); } else _hand.copy(rest);
+      // characters with posed hands (shopkeepers) move them smoothly from pose to pose
+      if (this.restHands) { arm.sm = arm.sm || _hand.clone(); arm.sm.lerp(_hand, Math.min(1, dt * 7)); _hand.copy(arm.sm); }
       // elbow: half way, pushed outward and down; the closer the hand, the more the arm bends
       const reach = S.distanceTo(_hand);
       const bend = Math.max(0, 0.56 - reach) * 0.9;

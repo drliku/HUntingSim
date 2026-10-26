@@ -65,7 +65,7 @@ export function saveProgress() {
 }
 
 export const QUALITY = {
-  low:    { pixelRatio: 0.8, shadows: false, shadowSize: 512,  grass: 0.35, viewDist: 170, antialias: false },
-  medium: { pixelRatio: 1.0, shadows: true,  shadowSize: 1024, grass: 0.7,  viewDist: 230, antialias: true },
-  high:   { pixelRatio: 1.5, shadows: true,  shadowSize: 2048, grass: 1.0,  viewDist: 290, antialias: true },
+  low:    { pixelRatio: 0.8, shadows: false, shadowSize: 512,  grass: 0.35, viewDist: 170, antialias: false, post: false },
+  medium: { pixelRatio: 1.0, shadows: true,  shadowSize: 2048, grass: 0.7,  viewDist: 230, antialias: true, post: true, msaa: 2, bloomRes: 0.4, ao: true },
+  high:   { pixelRatio: 1.5, shadows: true,  shadowSize: 4096, grass: 1.0,  viewDist: 290, antialias: true, post: true, msaa: 4, bloomRes: 0.5, ao: true },
 };

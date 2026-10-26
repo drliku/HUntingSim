@@ -121,6 +121,7 @@ export class Player {
     this.lastStep = 0;
     this.recoil = 0;
     this.shake = 0;
+    this.dip = 0; this.dipV = 0; this.lean = 0; // camera spring (landings) and strafe lean
     this.sway = new THREE.Vector2();
     this.eye = new THREE.Vector3();
     this.inWater = false;
@@ -214,6 +215,7 @@ export class Player {
     const ground = this.swimming ? -999 : this.world.groundAt(this.pos.x, this.pos.z, this.pos.y);
     const wasAir = !this.onGround;
     if (this.pos.y <= ground) {
+      if (wasAir) this.dipV += Math.max(-3.2, this.vel.y * 0.28);
       if (wasAir && this.vel.y < -6) { this.noiseSpike = 0.7; G.audio?.footstep(1.2, this.inWater); this.shake = 0.15; }
       this.pos.y = ground;
       this.vel.y = 0;
@@ -263,6 +265,11 @@ export class Player {
 
     this.recoil = damp(this.recoil, 0, 9, dt);
     this.shake = Math.max(0, this.shake - dt);
+    // the camera sinks on landing and springs back; it leans a touch into sideways movement
+    this.dipV += (-this.dip * 110 - this.dipV * 13) * dt;
+    this.dip = clamp(this.dip + this.dipV * dt, -0.25, 0.1);
+    const side = this.vel.x * Math.cos(this.yaw) - this.vel.z * Math.sin(this.yaw);
+    this.lean = damp(this.lean, clamp(-side * 0.0055, -0.028, 0.028), 5, dt);
 
     // Weapon sway when aiming (steadier crouched, much steadier holding breath)
     const t = performance.now() / 1000;
@@ -324,9 +331,9 @@ export class Player {
     const bobY = Math.sin(this.bobT * 2) * 0.045 * hb;
     const bobX = Math.cos(this.bobT) * 0.03 * hb;
     const sx = Math.cos(this.yaw), sz = -Math.sin(this.yaw);
-    cam.position.set(this.pos.x + sx * bobX, this.pos.y + this.eyeH + bobY, this.pos.z + sz * bobX);
+    cam.position.set(this.pos.x + sx * bobX, this.pos.y + this.eyeH + bobY + this.dip, this.pos.z + sz * bobX);
     const shake = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.05 : 0;
-    cam.rotation.set(this.pitch + this.recoil + this.sway.y + shake, this.yaw + this.sway.x, -bobX * 0.15);
+    cam.rotation.set(this.pitch + this.recoil + this.sway.y + shake, this.yaw + this.sway.x, -bobX * 0.15 + this.lean);
     this.eye.copy(cam.position);
   }
 

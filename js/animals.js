@@ -130,6 +130,7 @@ class Animal {
     this.charged = false;
     this.scale = 0.9 + Math.random() * 0.2;
     this.headPitch = 0; this.headYaw = 0; this.tailAngle = 0; this.restAmt = 0;
+    this.breathT = Math.random() * 6; this.exert = 0; this.lean = 0; this.prevHeading = 0; this.nod = 0; this.fidget = null; this.fidgetCd = 2 + Math.random() * 6;
     this.downSide = 1;
     this.fadeMat = null;
     this.identifyT = 0;
@@ -774,9 +775,9 @@ class Animal {
     const legs = r.legs;
     if (st === S.DOWN) {
       const c = this.stateT > this.runOff ? smoothstep(0, 0.9, this.stateT - this.runOff) : 0;
-      for (let i = 0; i < 4; i++) legs[i].rotation.x = damp(legs[i].rotation.x, (i < 2 ? -0.3 : 0.3) * c, 6, dt);
+      for (let i = 0; i < 4; i++) { legs[i].rotation.x = damp(legs[i].rotation.x, (i < 2 ? -0.3 : 0.3) * c, 6, dt); r.knees[i].rotation.x = damp(r.knees[i].rotation.x, (i < 2 ? 0.5 : 0.35) * c, 6, dt); }
       this.headPitch = damp(this.headPitch, 0.4 * c, 4, dt);
-      r.headPivot.rotation.set(this.headPitch, 0, 0);
+      r.setHead(this.headPitch, 0);
       if (this.stateT < this.runOff) this.animateGait(dt, this.speed);
       return;
     }
@@ -786,8 +787,11 @@ class Animal {
       if (m.hopper) {
         r.bodyPivot.position.y = -fold * this.rig.dims.legLen * 0.25;
       } else {
-        legs[0].rotation.x = legs[1].rotation.x = fold * 1.45;
-        legs[2].rotation.x = legs[3].rotation.x = -fold * 1.35;
+        legs[0].rotation.x = legs[1].rotation.x = fold * 1.1;
+        legs[2].rotation.x = legs[3].rotation.x = -fold * 1.1;
+        // fold the lower legs under the body
+        r.knees[0].rotation.x = r.knees[1].rotation.x = fold * 1.5;
+        r.knees[2].rotation.x = r.knees[3].rotation.x = fold * 1.6;
         r.bodyPivot.position.y = -fold * this.rig.dims.legLen * 0.72;
       }
       r.bodyPivot.rotation.x = 0;
@@ -798,7 +802,8 @@ class Animal {
 
     // Head: graze/drink down, alert up and toward threat
     let pitchT = 0, yawT = 0;
-    const headDown = (m.neckAngle + 0.55) * (m.hopper ? 0.5 : 1);
+    // swing the neck down from the shoulders far enough for the muzzle to reach the grass
+    const headDown = m.hopper ? (m.neckAngle + 0.55) * 0.5 : Math.min(2.3, m.neckAngle + 1.1);
     if (st === S.GRAZE || (st === S.DRINK && this.drinking)) {
       const vigil = Math.sin(this.stateT * 0.7 + this.id) > 0.75; // periodically lift head to scan
       pitchT = vigil ? 0 : headDown;
@@ -817,7 +822,36 @@ class Animal {
     }
     this.headPitch = damp(this.headPitch, pitchT, 4, dt);
     this.headYaw = damp(this.headYaw, yawT, 4, dt);
-    r.headPivot.rotation.set(this.headPitch, this.headYaw, 0, 'YXZ');
+    // walking animals nod with each stride; calm ones fidget now and then
+    const walking = sp > 0.1 && sp < b.trot * 1.1 && !m.hopper;
+    this.nod = damp(this.nod, walking ? Math.sin(this.phase * 2 + 0.6) * 0.07 : 0, 10, dt);
+    let fp = 0, fy = 0;
+    const calm = st === S.GRAZE || st === S.IDLE || st === S.REST || st === S.DRINK;
+    if (this.fidget) {
+      const fd = this.fidget, u = (fd.t += dt) / fd.dur, env = Math.sin(Math.min(1, u) * Math.PI);
+      if (fd.kind === 'shake') { fy = Math.sin(fd.t * 34) * 0.22 * env; fp = -0.15 * env; }
+      else if (fd.kind === 'look') { fy = fd.dir * 0.9 * env; fp = -0.25 * env; }
+      else if (fd.kind === 'flick') r.tailPivot.rotation.y += Math.sin(fd.t * 28) * 0.5 * env;
+      else if (fd.kind === 'stamp' && sp < 0.05 && this.restAmt < 0.1) { legs[fd.leg].rotation.x -= env * 0.45; r.knees[fd.leg].rotation.x += env * 1.3; }
+      if (u >= 1 || !calm) this.fidget = null;
+    } else if (calm && (this.fidgetCd -= dt) <= 0) {
+      const kinds = this.restAmt > 0.5 ? ['shake', 'look', 'flick'] : ['shake', 'look', 'flick', 'stamp', 'look'];
+      const kind = kinds[Math.floor(Math.random() * kinds.length)];
+      this.fidget = { kind, t: 0, dur: kind === 'shake' ? 0.55 : kind === 'look' ? 2.2 : kind === 'stamp' ? 0.5 : 0.7, dir: Math.random() < 0.5 ? -1 : 1, leg: Math.random() < 0.5 ? 0 : 1 };
+      this.fidgetCd = 3 + Math.random() * 8;
+    }
+    r.setHead(this.headPitch + this.nod + fp, this.headYaw + fy);
+    // breathing: faster and deeper after running
+    this.exert = damp(this.exert, sp > b.trot ? 1 : sp > b.walk * 1.4 ? 0.5 : 0, sp > b.walk ? 0.8 : 0.12, dt);
+    this.breathT += dt * (1.6 + this.exert * 4.5) * (st === S.REST ? 0.7 : 1);
+    const br = Math.sin(this.breathT) * (0.012 + this.exert * 0.02);
+    r.bones.spine.scale.set(1 + br * 0.8, 1 + br, 1);
+    // lean into turns and flex the spine with the stride
+    const turn = angleDiff(this.prevHeading, this.heading) / Math.max(dt, 1e-3);
+    this.prevHeading = this.heading;
+    this.lean = damp(this.lean, clamp(-turn * sp * 0.035, -0.22, 0.22), 5, dt);
+    r.bodyPivot.rotation.z = this.lean;
+    r.bones.spine.rotation.y = sp > 0.1 && !m.hopper ? Math.sin(this.phase) * 0.035 * Math.min(1, sp / b.walk) : 0;
     if (this.lunge > 0) { this.lunge -= dt; r.bodyPivot.rotation.x = -Math.sin((this.lunge / 0.45) * Math.PI) * 0.35; }
     if (st === S.ATTACK) { this.headPitch = damp(this.headPitch, 0.15, 6, dt); }
 
@@ -843,10 +877,12 @@ class Animal {
       r.bodyPivot.rotation.x = -s * 0.25 * amp;
       legs[0].rotation.x = legs[1].rotation.x = s * 0.7 * amp;
       legs[2].rotation.x = legs[3].rotation.x = -s * 0.9 * amp;
+      for (const k of r.knees) k.rotation.x = 0;
       return;
     }
     if (sp < 0.05) {
       for (const l of legs) l.rotation.x = damp(l.rotation.x, 0, 8, dt);
+      for (const k of r.knees) k.rotation.x = damp(k.rotation.x, 0, 8, dt);
       r.bodyPivot.rotation.x = damp(r.bodyPivot.rotation.x, 0, 6, dt);
       return;
     }
@@ -855,8 +891,11 @@ class Animal {
     else if (sp > b.walk * 1.4) { offs = [0, 0.5, 0.5, 0]; amp = 0.5; }
     else { offs = [0.25, 0.75, 0, 0.5]; amp = clamp(0.2 + sp / b.walk * 0.18, 0, 0.42); }
     for (let i = 0; i < 4; i++) {
-      const s = Math.sin(ph + offs[i] * Math.PI * 2);
-      legs[i].rotation.x = s * amp * (i < 2 ? 1 : 0.9);
+      const a = ph + offs[i] * Math.PI * 2;
+      legs[i].rotation.x = Math.sin(a) * amp * (i < 2 ? 1 : 0.9);
+      // the knee (front) or hock (hind) folds while the foot swings forward off the ground
+      const lift = Math.max(0, Math.cos(a));
+      r.knees[i].rotation.x = lift * amp * (i < 2 ? 1.9 : 1.3) + (i < 2 ? 0.04 : 0.08);
     }
     const gallop = sp > b.trot * 1.1;
     r.bodyPivot.position.y = gallop ? Math.abs(Math.sin(ph)) * 0.08 * m.shoulderH : Math.abs(Math.sin(ph * 2)) * 0.012 * m.shoulderH;
@@ -877,9 +916,9 @@ class Animal {
     put('vitals', 0, d.cY - m.bodyH * 0.12, m.bodyLen * 0.24, m.bodyH * 0.3, bm);
     put('body', 0, d.cY, 0, m.bodyH * 0.5, bm);
     put('body', 0, d.cY, -m.bodyLen * 0.3, m.bodyH * 0.46, bm);
-    const hm = r.headPivot.matrixWorld;
-    put('neck', 0, d.neckEnd.y * 0.5, d.neckEnd.z * 0.5, m.neckR * 1.3, hm);
-    put('head', d.headCenter.x, d.headCenter.y, d.headCenter.z + m.headLen * 0.1, Math.max(m.headH, m.headW) * 0.65, hm);
+    // neck and head follow the bending neck bones
+    put('neck', 0, 0, 0, m.neckR * 1.3, r.bones.mid.matrixWorld);
+    put('head', d.headCenter.x - d.neckEnd.x, d.headCenter.y - d.neckEnd.y, d.headCenter.z - d.neckEnd.z + m.headLen * 0.1, Math.max(m.headH, m.headW) * 0.65, r.bones.top.matrixWorld);
     out.length = i;
     return out;
   }

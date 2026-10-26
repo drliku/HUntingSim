@@ -133,7 +133,7 @@ export class Stage {
       rig.bodyPivot.rotation.z = 1.3;
       rig.bodyPivot.position.y = -m.bodyH * 0.12;
       rig.legs.forEach((l, i) => { l.rotation.x = i < 2 ? -0.3 : 0.3; });
-      rig.headPivot.rotation.x = 0.4;
+      if (rig.setHead) rig.setHead(0.4, 0); else rig.headPivot.rotation.x = 0.4;
     }
     this.holder.add(rig.root);
     this.rig = rig; this.anat = anat; this.scale = s; this.pose = pose;
@@ -185,7 +185,8 @@ export class Stage {
     cam.lookAt(t);
     if (this.pose === 'stand' && this.rig.headPivot) {
       const tt = performance.now() / 1000;
-      this.rig.headPivot.rotation.set(Math.sin(tt * 0.6) * 0.04, Math.sin(tt * 0.4) * 0.12, 0);
+      if (this.rig.setHead) this.rig.setHead(Math.sin(tt * 0.6) * 0.04, Math.sin(tt * 0.4) * 0.12);
+      else this.rig.headPivot.rotation.set(Math.sin(tt * 0.6) * 0.04, Math.sin(tt * 0.4) * 0.12, 0);
     }
     this.renderer.render(this.scene, cam);
     if (this.anatomyOn) this.positionLabels(w, h);

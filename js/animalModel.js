@@ -98,40 +98,75 @@ function buildBody(m, d) {
     return _col.getHex();
   };
   const parts = [loft(rings, { seg: 20, color })];
-  // shoulder and haunch muscles soften where the legs join
-  for (const s of [-1, 1]) {
-    if (!m.hopper) {
-      parts.push(ell(s * W * 0.32, cY - H * 0.12, -L * 0.3, W * 0.17, H * 0.36, L * 0.15, c.coat, 12, 9));
-      parts.push(ell(s * W * 0.3, cY - H * 0.08, L * 0.31, W * 0.15, H * 0.33, L * 0.12, neckCol, 12, 9));
-    } else {
-      parts.push(ell(s * W * 0.36, cY - H * 0.05, -L * 0.2, W * 0.2, H * 0.38, L * 0.26, c.coat, 12, 9));
-    }
-  }
+  // rabbits: big haunches (other animals' thighs grow out of the body smoothly instead)
+  if (m.hopper) for (const s of [-1, 1]) parts.push(ell(s * W * 0.36, cY - H * 0.05, -L * 0.2, W * 0.2, H * 0.38, L * 0.26, c.coat, 12, 9));
   if (m.ruff) parts.push(ell(0, cY + H * 0.06, L * 0.42, W * 0.47, H * 0.5, L * 0.12, mix(c.coat, c.belly, 0.12), 14, 10));
   if (m.mane) parts.push(ell(0, cY - H * 0.08, L * 0.42, W * 0.36, H * 0.48, L * 0.13, c.neck, 12, 9));
   return mergeColored(parts);
 }
 
-// ---------- head and neck ----------
+// ---------- neck (bends on a chain of bones) ----------
+// Bones: 0 = anchor (stays with the chest), 1 = root (at the neck base), 2 = mid, 3 = top (the head rides on it).
+// Each vertex is weighted by how far along the neck it lies, so the neck bends smoothly out of the shoulders.
+function skinNeck(geo, E) {
+  const pos = geo.attributes.position, n = pos.count;
+  const idx = new Uint16Array(n * 4), wt = new Float32Array(n * 4);
+  const len2 = E.lengthSq() || 1;
+  for (let i = 0; i < n; i++) {
+    const t = (pos.getX(i) * E.x + pos.getY(i) * E.y + pos.getZ(i) * E.z) / len2;
+    let a = 0, b = 0, w = 0;
+    if (t < -0.05) { a = 0; b = 0; w = 0; }
+    else if (t < 0.3) { a = 0; b = 1; w = smooth(-0.05, 0.3, t); }
+    else if (t < 0.65) { a = 1; b = 2; w = smooth(0.3, 0.65, t); }
+    else if (t < 1) { a = 2; b = 3; w = smooth(0.65, 1, t); }
+    else { a = 3; b = 3; w = 0; }
+    idx[i * 4] = a; idx[i * 4 + 1] = b; wt[i * 4] = 1 - w; wt[i * 4 + 1] = w;
+  }
+  geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(idx, 4));
+  geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(wt, 4));
+  return geo;
+}
+
+function buildNeck(m, d) {
+  const c = m.colors, p = [];
+  const ne = d.neckEnd, hc = d.headCenter, hd = d.headDir;
+  const up = V(0, hd.z, -hd.y);
+  const neckCol = c.neck || c.coat;
+  const throat = lighter(neckCol, c.belly) ? mix(neckCol, c.belly, 0.45) : neckCol;
+  // neck: from inside the chest, curving up into the back of the skull
+  const n0 = V(0, -m.neckR * 1.6, -m.neckR * 2.4), n3 = hc.clone().addScaledVector(hd, -m.headLen * 0.12).addScaledVector(up, -m.headH * 0.08);
+  const n1 = n0.clone().lerp(ne, 0.45), n2 = ne.clone().lerp(n3, 0.4);
+  p.push(loft(curveRings([n0, n1, n2, n3], (t) => {
+    // deep and broad where it leaves the chest, tapering quickly to the throat
+    const r = m.neckR * (1.95 - 1.15 * Math.pow(t, 0.6));
+    return [r * (0.78 - 0.08 * t), r * (1.18 - 0.1 * t)];
+  }, 16), {
+    seg: 16, ySign: 1, side: V(1, 0, 0), capStart: true, capEnd: true,
+    color: (pt, u, s) => mix(neckCol, throat, smooth(-0.15, -0.8, s)), // -y of the neck frame is the throat side
+  }));
+  if (m.mane) p.push(ell(0, ne.y * 0.45 - m.neckR * 0.4, ne.z * 0.45 + m.neckR * 0.3, m.neckR * 1.05, m.neckLen * 0.42, m.neckR * 1.2, c.neck, 12, 8, -m.neckAngle + Math.PI / 2));
+  if (m.ruff) p.push(ell(0, ne.y * 0.3, ne.z * 0.3 + 0.01, m.neckR * 1.2, m.neckR * 1.3, m.neckR * 1.15, mix(c.coat, c.belly, 0.12), 12, 9));
+
+  if (m.bell) {
+    const bc = ne.clone().multiplyScalar(0.75).add(V(0, -m.neckR * 1.4, 0.02));
+    p.push(ell(bc.x, bc.y, bc.z, m.neckR * 0.25, m.neckR * 1.1, m.neckR * 0.4, c.coat, 8, 6));
+  }
+  if (m.throatBands) {
+    for (const t of [0.45, 0.8]) {
+      const tc = ne.clone().multiplyScalar(t);
+      p.push(ell(tc.x, tc.y - m.neckR * 0.35, tc.z + m.neckR * 0.25, m.neckR * 0.95, m.neckR * 0.35, m.neckR * 0.85, m.throatBands, 10, 6, -m.neckAngle));
+    }
+  }
+  return skinNeck(mergeColored(p), ne);
+}
+
+// ---------- head ----------
 function buildHead(m, d, male, rng) {
   const c = m.colors, p = [];
   const ne = d.neckEnd, hc = d.headCenter, hd = d.headDir;
   const up = V(0, hd.z, -hd.y); // head-local up (perpendicular to the head axis)
   const neckCol = c.neck || c.coat;
   const throat = lighter(neckCol, c.belly) ? mix(neckCol, c.belly, 0.45) : neckCol;
-
-  // neck: from inside the chest, curving up into the back of the skull
-  const n0 = V(0, -m.neckR * 1.3, -m.neckR * 1.9), n3 = hc.clone().addScaledVector(hd, -m.headLen * 0.12).addScaledVector(up, -m.headH * 0.08);
-  const n1 = n0.clone().lerp(ne, 0.45), n2 = ne.clone().lerp(n3, 0.4);
-  p.push(loft(curveRings([n0, n1, n2, n3], (t) => {
-    const r = m.neckR * (1.5 - 0.75 * Math.pow(t, 0.8));
-    return [r * 0.8, r * (1.05 + 0.12 * Math.sin(t * Math.PI))];
-  }, 13), {
-    seg: 14, ySign: 1, side: V(1, 0, 0), capStart: true, capEnd: true,
-    color: (pt, u, s) => mix(neckCol, throat, smooth(-0.15, -0.8, s)), // -y of the neck frame is the throat side
-  }));
-  if (m.mane) p.push(ell(0, ne.y * 0.45 - m.neckR * 0.4, ne.z * 0.45 + m.neckR * 0.3, m.neckR * 1.05, m.neckLen * 0.42, m.neckR * 1.2, c.neck, 12, 8, -m.neckAngle + Math.PI / 2));
-  if (m.ruff) p.push(ell(0, ne.y * 0.3, ne.z * 0.3 + 0.01, m.neckR * 1.2, m.neckR * 1.3, m.neckR * 1.15, mix(c.coat, c.belly, 0.12), 12, 9));
 
   // skull and snout as one smooth shape along the head axis
   const at = (along, lift) => hc.clone().addScaledVector(hd, along).addScaledVector(up, lift);
@@ -193,16 +228,6 @@ function buildHead(m, d, male, rng) {
     p.push(cyl(a, b, hw * 0.09, hw * 0.12, 8, m.faceStripe));
   }
   if (m.beard) p.push(ell(0, hc.y - hh * 0.6, hc.z - hl * 0.02, hw * 0.24, hh * 0.38, hl * 0.22, c.neck || c.head, 10, 8, 0.2));
-  if (m.bell) {
-    const bc = ne.clone().multiplyScalar(0.75).add(V(0, -m.neckR * 1.4, 0.02));
-    p.push(ell(bc.x, bc.y, bc.z, m.neckR * 0.25, m.neckR * 1.1, m.neckR * 0.4, c.coat, 8, 6));
-  }
-  if (m.throatBands) {
-    for (const t of [0.45, 0.8]) {
-      const tc = ne.clone().multiplyScalar(t);
-      p.push(ell(tc.x, tc.y - m.neckR * 0.35, tc.z + m.neckR * 0.25, m.neckR * 0.95, m.neckR * 0.35, m.neckR * 0.85, m.throatBands, 10, 6, -m.neckAngle));
-    }
-  }
   // eyes with a glint of light
   for (const s of [-1, 1]) {
     const e = at(hl * 0.05, hh * 0.16).add(V(s * hw * 0.46 * cheek, 0, 0));
@@ -353,9 +378,10 @@ function buildLeg(m, d, hind) {
   }
   // one smooth limb from deep in the body down to the foot, thick at the top
   // the top is a rounded dome tucked up inside the body, so no edge shows where the leg joins
-  const top = V(J[0].x, J[0].y + r * 2.2, J[0].z + (hind ? -r * 0.3 : r * 0.2));
+  const top = V(J[0].x, J[0].y + r * 3.2, J[0].z + (hind ? -r * 0.4 : r * 0.25));
   const pts = [top, ...J];
-  const radii = hind ? [r * 1.2, r * 2.6, r * 1.7, r * 1.15, r * 0.82, r * 0.78] : [r * 1.1, r * 2.15, r * 1.45, r * 1.05, r * 0.82, r * 0.78];
+  // broad thigh / shoulder blending up into the body, then a slim lower leg
+  const radii = hind ? [r * 2.2, r * 3.1, r * 1.75, r * 1.12, r * 0.82, r * 0.78] : [r * 1.9, r * 2.5, r * 1.5, r * 1.02, r * 0.82, r * 0.78];
   const N = 16;
   const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
   const rings = [];
@@ -452,7 +478,7 @@ function buildTail(m) {
 export function getSpeciesGeometry(speciesId, male, lod = 0) {
   const key = speciesId + (male ? ':m' : ':f') + ':' + lod;
   if (cache.has(key)) return cache.get(key);
-  detail = lod ? 0.32 : 0.9;
+  detail = lod ? 0.32 : 1.05;
   const sp = SPECIES[speciesId];
   const m = sp.model;
   const rng = mulberry32(speciesId.length * 97 + (male ? 13 : 7));
@@ -460,6 +486,7 @@ export function getSpeciesGeometry(speciesId, male, lod = 0) {
   const geo = {
     body: buildBody(m, d),
     head: buildHead(m, d, male, rng),
+    neck: buildNeck(m, d),
     legF: buildLeg(m, d, false),
     legH: buildLeg(m, d, true),
     tail: buildTail(m),
@@ -470,49 +497,148 @@ export function getSpeciesGeometry(speciesId, male, lod = 0) {
   return geo;
 }
 
-// Create an animal rig. Returns references to the animated parts.
+// ---------- one skinned mesh per animal ----------
+// Bones: 0 spine, 1-3 neck (root, mid, top — the head rides on top), 4 tail,
+// then hip + knee for each leg: 5/6 front-left, 7/8 front-right, 9/10 hind-left, 11/12 hind-right.
+const B = { SPINE: 0, NROOT: 1, NMID: 2, NTOP: 3, TAIL: 4 };
+const HIP = [5, 7, 9, 11], KNEE = [6, 8, 10, 12];
+const unifiedCache = new Map();
+
+function legSlots(d) {
+  return [[d.legX, d.frontZ, false], [-d.legX, d.frontZ, false], [d.legX, d.hindZ, true], [-d.legX, d.hindZ, true]];
+}
+
+// Merge body, neck, head, legs and tail into one geometry with bone weights
+function unifiedGeometry(speciesId, male, lod) {
+  const key = speciesId + (male ? ':m' : ':f') + ':' + lod;
+  if (unifiedCache.has(key)) return unifiedCache.get(key);
+  const m = SPECIES[speciesId].model;
+  const g = getSpeciesGeometry(speciesId, male, lod);
+  const d = g.dims;
+  const parts = [];
+  const add = (geo, offset, weigh) => parts.push({ geo, offset, weigh });
+  const slots = legSlots(d);
+  // body: the flanks over each leg follow that leg a little, so shoulders and haunches move with it
+  add(g.body, null, (x, y, z) => {
+    let best = -1, bw = 0;
+    slots.forEach(([lx, lz], k) => {
+      if (Math.sign(x) !== Math.sign(lx) && Math.abs(x) > 0.02) return;
+      const dist = Math.hypot((x - lx) * 1.3, (z - lz)) / (m.bodyLen * 0.2);
+      const w = smooth(1, 0.15, dist) * smooth(d.cY + m.bodyH * 0.15, d.legTopY - m.bodyH * 0.05, y) * 0.55;
+      if (w > bw) { bw = w; best = k; }
+    });
+    return best >= 0 ? [B.SPINE, HIP[best], bw] : [B.SPINE, B.SPINE, 0];
+  });
+  // neck: its own weights (anchor/root/mid/top) map onto spine and neck bones
+  add(g.neck, d.neckBase, null);
+  add(g.head, d.neckBase, () => [B.NTOP, B.NTOP, 0]);
+  add(g.tail, d.tailBase, (x, y, z) => [B.SPINE, B.TAIL, smooth(0.0, Math.min(0.06, m.tailLen * 0.3), Math.hypot(y, z))]);
+  slots.forEach(([lx, lz, hind], k) => {
+    const J = hind ? d.hind : d.front;
+    const jy = J[2].y, band = m.legR * 2.6;
+    add(hind ? g.legH : g.legF, new THREE.Vector3(lx, d.legTopY, lz), (x, y) => (y > 0
+      ? [HIP[k], B.SPINE, 0.6 * smooth(0, m.legR * 3.2, y)] // the part tucked inside the body stays with it
+      : [HIP[k], KNEE[k], smooth(jy + band, jy - band, y)]));
+  });
+  let total = 0;
+  for (const p of parts) total += p.geo.attributes.position.count;
+  const pos = new Float32Array(total * 3), nrm = new Float32Array(total * 3), col = new Float32Array(total * 3);
+  const si = new Uint16Array(total * 4), sw = new Float32Array(total * 4);
+  let o = 0;
+  for (const p of parts) {
+    const a = p.geo.attributes, n = a.position.count;
+    const ox = p.offset ? p.offset.x : 0, oy = p.offset ? p.offset.y : 0, oz = p.offset ? p.offset.z : 0;
+    for (let i = 0; i < n; i++) {
+      const x = a.position.getX(i), y = a.position.getY(i), z = a.position.getZ(i);
+      const k = o + i;
+      pos[k * 3] = x + ox; pos[k * 3 + 1] = y + oy; pos[k * 3 + 2] = z + oz;
+      nrm[k * 3] = a.normal.getX(i); nrm[k * 3 + 1] = a.normal.getY(i); nrm[k * 3 + 2] = a.normal.getZ(i);
+      col[k * 3] = a.color.getX(i); col[k * 3 + 1] = a.color.getY(i); col[k * 3 + 2] = a.color.getZ(i);
+      if (p.weigh) {
+        const [b0, b1, w] = p.weigh(x, y, z);
+        si[k * 4] = b0; si[k * 4 + 1] = b1; sw[k * 4] = 1 - w; sw[k * 4 + 1] = w;
+      } else {
+        // neck geometry: anchor (0) -> spine, root/mid/top (1-3) keep their numbers
+        si[k * 4] = a.skinIndex.getX(i); si[k * 4 + 1] = a.skinIndex.getY(i);
+        sw[k * 4] = a.skinWeight.getX(i); sw[k * 4 + 1] = a.skinWeight.getY(i);
+      }
+    }
+    o += n;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  out.setAttribute('skinIndex', new THREE.BufferAttribute(si, 4));
+  out.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
+  out.computeBoundingSphere();
+  out.computeBoundingBox();
+  unifiedCache.set(key, out);
+  return out;
+}
+
+// Create an animal rig. Returns references to the animated parts:
+// legs[] are the hip bones and knees[] the knee/hock bones, tailPivot the tail bone.
 export function createAnimalRig(speciesId, male, material = animalMaterial) {
   const sp = SPECIES[speciesId];
   const m = sp.model;
-  const g = getSpeciesGeometry(speciesId, male);
-  const d = g.dims;
+  const d = getSpeciesGeometry(speciesId, male, 0).dims;
   const root = new THREE.Group();
   const bodyPivot = new THREE.Group();
   root.add(bodyPivot);
 
-  const body = new THREE.Mesh(g.body, material);
-  bodyPivot.add(body);
-
-  const headPivot = new THREE.Group();
-  headPivot.position.copy(d.neckBase);
-  const head = new THREE.Mesh(g.head, material);
-  headPivot.add(head);
-  bodyPivot.add(headPivot);
-
-  const legs = [];
-  const legPos = [[d.legX, d.frontZ, false], [-d.legX, d.frontZ, false], [d.legX, d.hindZ, true], [-d.legX, d.hindZ, true]];
-  for (const [x, z, hind] of legPos) {
-    const leg = new THREE.Mesh(hind ? g.legH : g.legF, material);
-    leg.position.set(x, d.legTopY, z);
-    bodyPivot.add(leg);
-    legs.push(leg);
+  const spine = new THREE.Bone();
+  const nRoot = new THREE.Bone(), nMid = new THREE.Bone(), nTop = new THREE.Bone();
+  nRoot.position.copy(d.neckBase);
+  nMid.position.copy(d.neckEnd).multiplyScalar(0.5);
+  nTop.position.copy(d.neckEnd).multiplyScalar(0.5);
+  spine.add(nRoot); nRoot.add(nMid); nMid.add(nTop);
+  const tailB = new THREE.Bone();
+  tailB.position.copy(d.tailBase);
+  spine.add(tailB);
+  const legs = [], knees = [];
+  for (const [lx, lz, hind] of legSlots(d)) {
+    const hip = new THREE.Bone(), knee = new THREE.Bone();
+    hip.position.set(lx, d.legTopY, lz);
+    knee.position.copy((hind ? d.hind : d.front)[2]);
+    hip.add(knee);
+    spine.add(hip);
+    legs.push(hip); knees.push(knee);
   }
-  const tailPivot = new THREE.Group();
-  tailPivot.position.copy(d.tailBase);
-  const tail = new THREE.Mesh(g.tail, material);
-  tailPivot.add(tail);
-  bodyPivot.add(tailPivot);
+  const bones = [spine, nRoot, nMid, nTop, tailB];
+  for (let k = 0; k < 4; k++) bones.push(legs[k], knees[k]);
 
-  const meshes = [body, head, tail, ...legs];
-  for (const me of meshes) { me.castShadow = true; me.receiveShadow = false; }
+  const mesh = new THREE.SkinnedMesh(unifiedGeometry(speciesId, male, 0), material);
+  mesh.add(spine);
+  bodyPivot.add(mesh);
+  root.updateMatrixWorld(true);
+  mesh.bind(new THREE.Skeleton(bones));
+  mesh.castShadow = true; mesh.receiveShadow = true;
+
+  // Head down: the neck swings from the shoulders while the poll straightens, so the muzzle points at the
+  // ground instead of tucking under the chin. Head up: shared more evenly along the neck.
+  const setHead = (pitch, yaw = 0) => {
+    if (pitch >= 0) {
+      nRoot.rotation.set(pitch * 0.95, yaw * 0.45, 0, 'YXZ');
+      nMid.rotation.set(pitch * 0.06, yaw * 0.3, 0, 'YXZ');
+      nTop.rotation.set(-pitch * 0.4, yaw * 0.25, 0, 'YXZ');
+    } else {
+      nRoot.rotation.set(pitch * 0.5, yaw * 0.45, 0, 'YXZ');
+      nMid.rotation.set(pitch * 0.2, yaw * 0.3, 0, 'YXZ');
+      nTop.rotation.set(pitch * 0.3, yaw * 0.25, 0, 'YXZ');
+    }
+  };
   // distant animals swap to a lighter version of the same model
   let lod = 0;
   const setLod = (level) => {
     if (level === lod) return;
     lod = level;
-    const gg = getSpeciesGeometry(speciesId, male, level);
-    body.geometry = gg.body; head.geometry = gg.head; tail.geometry = gg.tail;
-    legs.forEach((l, i) => { l.geometry = i < 2 ? gg.legF : gg.legH; });
+    mesh.geometry = unifiedGeometry(speciesId, male, level);
   };
-  return { root, bodyPivot, body, headPivot, head, legs, tailPivot, tail, meshes, dims: d, model: m, setLod };
+  const meshes = [mesh];
+  return {
+    root, bodyPivot, body: mesh, mesh, headPivot: nRoot, neck: mesh, head: mesh,
+    bones: { spine, root: nRoot, mid: nMid, top: nTop }, setHead,
+    legs, knees, tailPivot: tailB, tail: mesh, meshes, dims: d, model: m, setLod,
+  };
 }

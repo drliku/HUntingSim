@@ -261,6 +261,13 @@ select option { background: #1a1d1b; }
 .map-loc { position: absolute; transform: translate(-50%, -50%); font-size: 11px; font-weight: 600; color: #fff; text-shadow: 0 1px 3px #000, 0 0 6px #000; cursor: pointer; white-space: nowrap; padding: 2px 6px; border-radius: 6px; }
 .map-loc::before { content: ''; display: block; width: 7px; height: 7px; margin: 0 auto 2px; border-radius: 50%; background: #fff; border: 2px solid #222; }
 .map-loc:hover { background: rgba(217,168,91,.9); color: #17130c; text-shadow: none; }
+.map-poi { position: absolute; transform: translate(-50%, -12px); pointer-events: none; display: flex; flex-direction: column; align-items: center; z-index: 1; }
+.map-poi.above { flex-direction: column-reverse; transform: translate(-50%, calc(-100% + 12px)); }
+.map-poi .icons { display: flex; gap: 1px; }
+.map-poi img { width: 24px; height: 24px; display: block; }
+.map-poi span { font-size: 10.5px; font-weight: 700; color: #fff; text-shadow: 0 1px 3px #000, 0 0 6px #000; white-space: nowrap; margin-top: 1px; }
+.map-poi.mine img { width: 32px; height: 32px; filter: drop-shadow(0 0 6px rgba(255,190,90,.9)); }
+.map-poi.mine span { color: #ffd38a; }
 .map-player { position: absolute; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 16px solid var(--accent); transform-origin: 50% 66%; filter: drop-shadow(0 0 3px #000); }
 .map-animal { position: absolute; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: #ff6b5a; box-shadow: 0 0 4px #000; }
 

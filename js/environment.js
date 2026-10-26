@@ -37,6 +37,12 @@ float fbm(vec2 p){
   for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + 1.7; a *= 0.5; }
   return s;
 }
+// cheaper three-octave version for secondary cloud detail
+float fbm3(vec2 p){
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 3; i++) { s += a * vnoise(p); p = p * 2.03 + 1.7; a *= 0.5; }
+  return s * 1.14;
+}
 void main(){
   vec3 d = normalize(vDir);
   float h = d.y;
@@ -51,13 +57,26 @@ void main(){
   // Procedural cloud layer projected onto a plane above the camera
   float cover = 0.0;
   if (h > 0.0) {
+    // high cirrus: thin streaks, lit by the sun
+    vec2 cu = d.xz / (h + 0.05) * 0.55 + uCloudOff * 0.6;
+    float ci = fbm3(cu * vec2(0.7, 3.2) + 11.0);
+    float cirrus = smoothstep(0.55, 0.85, ci) * smoothstep(0.02, 0.3, h) * (0.35 + uCloud * 0.3);
+    col = mix(col, mix(uCloudCol, uSunColor, 0.25 + pow(sd, 4.0) * 0.5), cirrus * 0.5);
+    // cumulus: denser clouds, brighter on the side facing the sun, with a silver lining near it
     vec2 uv = d.xz / (h + 0.12) * 1.3 + uCloudOff;
     float n = fbm(uv);
     float t = 0.74 - uCloud * 0.46;
     cover = smoothstep(t - 0.1, t + 0.14, n) * smoothstep(0.0, 0.16, h);
-    float dens = fbm(uv * 2.1 + 5.3);
-    vec3 cc = mix(uCloudShade, uCloudCol, clamp(0.35 + (n - t) * 1.6 + dens * 0.3, 0.0, 1.0));
-    cc += uSunColor * pow(sd, 8.0) * 0.35;
+    vec2 toSun = normalize(uSunDir.xz + vec2(1e-4)) * 0.09;
+    // light direction across the cloud from a cheap two-octave gradient
+    vec2 us = uv + toSun;
+    float g0 = vnoise(uv) + 0.5 * vnoise(uv * 2.03 + 1.7), g1 = vnoise(us) + 0.5 * vnoise(us * 2.03 + 1.7);
+    float nl = n - (g0 - g1) * 0.6;
+    float lit = clamp(0.55 + (n - nl) * 5.0, 0.0, 1.0);
+    float dens = fbm3(uv * 2.1 + 5.3);
+    vec3 cc = mix(uCloudShade, uCloudCol, clamp(0.25 + (n - t) * 1.4 + dens * 0.25, 0.0, 1.0) * (0.6 + 0.5 * lit));
+    float rim = smoothstep(t + 0.14, t - 0.04, n) * cover;
+    cc += uSunColor * (pow(sd, 8.0) * 0.35 + rim * pow(sd, 3.0) * 1.4 + lit * 0.08);
     col = mix(col, cc, cover * 0.95);
   }
   col += (sun + moon) * (1.0 - cover);
@@ -109,6 +128,55 @@ const SKY_KEYS = [
   [0.25, 0x4a7ec4, 0xb9cfe3, 0xffe2b8, 2.4, 1.35],
   [0.6, 0x3f76c9, 0xaecbe8, 0xfff4e0, 2.8, 1.45],
 ];
+
+
+const WATER_VS = `
+#include <fog_pars_vertex>
+varying vec3 vWPos;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWPos = wp.xyz;
+  vec4 mvPosition = viewMatrix * wp;
+  gl_Position = projectionMatrix * mvPosition;
+  #include <fog_vertex>
+}`;
+const WATER_FS = `
+uniform float uTime, uHalf, uDaylight;
+uniform sampler2D uDepth;
+uniform vec3 uDeep, uShallow, uSkyTop, uSkyHorizon, uSunDir, uSunColor;
+varying vec3 vWPos;
+#include <fog_pars_fragment>
+float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), u.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), u.x), u.y); }
+void main() {
+  vec2 p = vWPos.xz;
+  float t = uTime;
+  float depth = texture2D(uDepth, (p + uHalf) / (2.0 * uHalf)).r * 4.0;
+  // layered moving ripples
+  vec3 n = normalize(vec3(
+    0.06 * sin(p.x * 0.9 + t * 1.3) * cos(p.y * 0.7 - t * 1.1) + 0.035 * sin(p.x * 2.3 - p.y * 1.7 + t * 2.1) + 0.02 * sin((p.x + p.y) * 4.1 + t * 3.3) + (vn(p * 3.0 + t * 0.6) - 0.5) * 0.05,
+    1.0,
+    0.05 * cos(p.y * 0.8 + t * 1.2) * sin(p.x * 0.6 - t) + 0.03 * sin(p.y * 2.7 + p.x * 1.3 - t * 1.8) + 0.02 * cos((p.x - p.y) * 3.7 - t * 2.9) + (vn(p * 3.0 - t * 0.5 + 7.0) - 0.5) * 0.05));
+  vec3 V = normalize(cameraPosition - vWPos);
+  float fres = mix(0.03, 1.0, pow(1.0 - max(dot(n, V), 0.0), 4.0));
+  vec3 R = reflect(-V, n);
+  vec3 sky = mix(uSkyHorizon, uSkyTop, clamp(R.y * 1.6, 0.0, 1.0));
+  vec3 body = mix(uShallow, uDeep, smoothstep(0.0, 2.5, depth)) * (0.25 + 0.75 * uDaylight);
+  vec3 col = mix(body, sky, fres * 0.85);
+  float sd = max(dot(R, normalize(uSunDir)), 0.0);
+  col += uSunColor * (pow(sd, 260.0) * 5.0 + pow(sd, 24.0) * 0.18) * step(0.0, uSunDir.y);
+  // foam where the water meets the shore
+  float fn = vn(p * 2.6 + vec2(t * 0.35, t * 0.27)) * 0.6 + vn(p * 7.0 - t * 0.5) * 0.4;
+  float foam = smoothstep(0.22, 0.02, depth - fn * 0.14) * smoothstep(-0.02, 0.03, depth);
+  col = mix(col, vec3(0.85, 0.9, 0.9) * (0.3 + 0.7 * uDaylight), foam * 0.7);
+  float alpha = mix(0.4, 0.9, smoothstep(0.0, 1.3, depth));
+  alpha = max(max(alpha, fres * 0.92), foam * 0.85);
+  gl_FragColor = vec4(col, alpha);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  #include <fog_fragment>
+}`;
 
 export class Environment {
   constructor(scene, quality) {
@@ -183,6 +251,7 @@ export class Environment {
 
     this.buildPrecipitation(rng);
     this.buildWater();
+    this.buildMountains();
 
     this.setWeather('clear', true);
     this.update(0, new THREE.Vector3());
@@ -239,10 +308,57 @@ export class Environment {
     this.scene.add(this.snow);
   }
 
+  // Three rings of distant mountains, fading into the horizon colour with distance
+  buildMountains() {
+    const layers = [[300, 1.35, 0.22], [370, 1.8, 0.4], [440, 2.3, 0.58]];
+    const U = this.skyUniforms;
+    this.mountains = [];
+    layers.forEach(([R, hk, fade], li) => {
+      const seg = 220, pos = [], idx = [], hgt = [];
+      for (let i = 0; i <= seg; i++) {
+        const a = (i / seg) * Math.PI * 2;
+        let h = 0;
+        for (const [f, amp, ph] of [[3, 14, 0.3], [7, 9, 1.7], [13, 5, 4.1], [29, 2.4, 2.2], [53, 1.2, 0.9]]) h += Math.sin(a * f + ph + li * 2.3) * amp;
+        h = (22 + h) * hk;
+        h = Math.max(6, h + Math.max(0, Math.sin(a * 2 + li) * 18 * hk));
+        const x = Math.cos(a) * R, z = Math.sin(a) * R;
+        pos.push(x, -25, z, x, h, z);
+        hgt.push(0, h, 0, h);
+      }
+      for (let i = 0; i < seg; i++) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setIndex(idx);
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { uHorizon: U.uHorizon, uTop: U.uTop, uSunColor: U.uSunColor, uSunDir: U.uSunDir, uFade: { value: fade }, uFogK: { value: 1 } },
+        vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `uniform vec3 uHorizon, uTop, uSunColor, uSunDir; uniform float uFade, uFogK; varying vec3 vP;
+          void main(){
+            float hy = clamp(vP.y / 100.0, 0.0, 1.0);
+            vec3 rock = mix(uHorizon * 0.42, uTop * 0.55, 0.3) * (0.7 + 0.3 * hy);
+            vec3 lit = uSunColor * 0.12 * max(0.0, dot(normalize(vec3(vP.x, 0.0, vP.z)), normalize(uSunDir)));
+            float snow = smoothstep(70.0, 95.0, vP.y) * (1.0 - uFade * 0.4);
+            vec3 c = mix(rock + lit, uHorizon * 1.15, snow * 0.6);
+            // aerial haze: the farther the range and the lower on the slope, the more it melts into the horizon
+            float haze = clamp(uFade + (1.0 - hy) * 0.25, 0.0, 1.0) * uFogK;
+            gl_FragColor = vec4(mix(c, uHorizon, haze), 1.0);
+            #include <tonemapping_fragment>
+            #include <colorspace_fragment>
+          }`,
+        side: THREE.DoubleSide, fog: false, depthWrite: true,
+      });
+      const m = new THREE.Mesh(g, mat);
+      m.renderOrder = -8;
+      m.frustumCulled = false;
+      this.scene.add(m);
+      this.mountains.push(m);
+    });
+  }
+
   buildWater() {
     const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, 1, 1);
     geo.rotateX(-Math.PI / 2);
-    this.waterUniforms = { uTime: { value: 0 } };
+    this.waterUniforms = { uTime: { value: 0 }, uDaylight: { value: 1 } };
     const mat = new THREE.MeshPhongMaterial({
       color: 0x2c4f5a, specular: 0x1c2328, shininess: 60, transparent: true, opacity: 0.86, depthWrite: false,
     });
@@ -264,6 +380,30 @@ export class Environment {
     this.water.position.y = WATER_LEVEL;
     this.water.renderOrder = 1;
     this.scene.add(this.water);
+  }
+
+  // Rebuild the water once the terrain is final, so it knows how deep it is everywhere
+  setWaterDepth(terrain) {
+    const n = terrain.segs + 1;
+    const data = new Uint8Array(n * n);
+    for (let k = 0; k < n * n; k++) data[k] = Math.round(Math.max(0, Math.min(1, (WATER_LEVEL - terrain.heights[k]) / 4)) * 255);
+    const tex = new THREE.DataTexture(data, n, n, THREE.RedFormat, THREE.UnsignedByteType);
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    const U = this.skyUniforms;
+    const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+      uTime: this.waterUniforms.uTime, uDepth: { value: tex }, uHalf: { value: WORLD_SIZE / 2 },
+      uDeep: { value: new THREE.Color(0x1d3a44) }, uShallow: { value: new THREE.Color(0x4a7a6a) }, uDaylight: { value: 1 },
+    }]);
+    // share the sky's live colours and sun direction
+    uniforms.uSkyTop = U.uTop; uniforms.uSkyHorizon = U.uHorizon; uniforms.uSunDir = U.uSunDir; uniforms.uSunColor = U.uSunColor;
+    uniforms.uTime = this.waterUniforms.uTime;
+    this.waterUniforms.uDaylight = uniforms.uDaylight;
+    const mat = new THREE.ShaderMaterial({
+      uniforms, vertexShader: WATER_VS, fragmentShader: WATER_FS, transparent: true, depthWrite: false, fog: true,
+    });
+    this.water.material.dispose();
+    this.water.material = mat;
   }
 
   setWeather(name, instant = false) {
@@ -366,8 +506,16 @@ export class Environment {
       this.sun.color.setRGB(0.55, 0.65, 0.9);
       this.sun.intensity = 0.7 * (1 - g * 0.6) + flash * 3;
     }
-    this.sun.target.position.copy(camPos);
-    // snap shadow camera to texel grid to reduce shimmering
+    // snap the shadow camera to its texel grid so shadow edges do not shimmer as you move
+    {
+      const L = this.sun.position.clone().sub(camPos).normalize();
+      const right = new THREE.Vector3(0, 1, 0).cross(L).normalize(), up = L.clone().cross(right).normalize();
+      const sc = this.sun.shadow.camera, texel = (sc.right - sc.left) / this.sun.shadow.mapSize.x;
+      const rx = Math.round(camPos.dot(right) / texel) * texel, uy = Math.round(camPos.dot(up) / texel) * texel, lz = camPos.dot(L);
+      const snapped = right.multiplyScalar(rx).add(up.multiplyScalar(uy)).add(L.clone().multiplyScalar(lz));
+      this.sun.target.position.copy(snapped);
+      this.sun.position.copy(snapped).addScaledVector(L, 160);
+    }
     this.sun.target.updateMatrixWorld();
     this.hemi.intensity = hemiI + night * 0.2 + flash * 1.5;
     this.hemi.color.copy(top).lerp(new THREE.Color(0xffffff), 0.35);
@@ -375,6 +523,13 @@ export class Environment {
 
     // Fog
     this.fogColor.copy(hor).lerp(top, 0.15);
+    // looking towards the sun, the haze glows warmer
+    if (this.camRef) {
+      const fwd = this.camRef.getWorldDirection(new THREE.Vector3());
+      const face = Math.max(0, fwd.x * this.sunDir.x + fwd.z * this.sunDir.z) / Math.max(0.2, Math.hypot(this.sunDir.x, this.sunDir.z));
+      this.fogColor.lerp(sunCol, Math.pow(face, 3) * 0.32 * this.daylight * (1 - g) * smoothstep(0.6, 0.05, elev));
+    }
+    for (const m of this.mountains || []) m.material.uniforms.uFogK.value = clamp(1.25 - this.w.fog * 0.25, 0, 1);
     this.scene.fog.color.copy(this.fogColor);
     const far = this.viewDist * this.w.fog;
     this.scene.fog.far = far;
@@ -406,7 +561,8 @@ export class Environment {
     }
 
     this.waterUniforms.uTime.value = tnow;
-    this.water.material.color.setRGB(0.04, 0.1, 0.12).multiplyScalar(0.4 + this.daylight * 0.6).lerp(this.fogColor, 0.12);
+    this.waterUniforms.uDaylight.value = this.daylight;
+    if (this.water.material.color) this.water.material.color.setRGB(0.04, 0.1, 0.12).multiplyScalar(0.4 + this.daylight * 0.6).lerp(this.fogColor, 0.12);
   }
 
   // How well things can be seen (0..1) — used by animal and player perception.

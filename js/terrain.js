@@ -173,7 +173,7 @@ export class Terrain {
     const c = new THREE.Color();
     const grassA = new THREE.Color(0x4d6b2a), grassB = new THREE.Color(0x6f7d34);
     const dry = new THREE.Color(0x8f8650), forest = new THREE.Color(0x3d3a22);
-    const mud = new THREE.Color(0x6b5a40), rock = new THREE.Color(0x6e6b66);
+    const mud = new THREE.Color(0x6b5a40), rock = new THREE.Color(0x6b6862), rockWarm = new THREE.Color(0x7a6a56);
     const trail = new THREE.Color(0x7a6448), ridge = new THREE.Color(0x3f4f2a);
     const tmp = new THREE.Color();
     for (let i = 0; i < n * n; i++) {
@@ -188,7 +188,9 @@ export class Terrain {
       const dr = Math.hypot(x + 150, z + 130);
       c.lerp(ridge, smoothstep(90, 30, dr) * 0.5);
       c.lerp(mud, smoothstep(1.6, 0.2, h));
-      c.lerp(rock, smoothstep(0.12, 0.3, slope));
+      // steep ground turns to rock, warm or cool by area, only where it is really steep
+      tmp.copy(rock).lerp(rockWarm, noise2(x * 0.02 + 4, z * 0.02) * 0.5 + 0.5);
+      c.lerp(tmp, smoothstep(0.2, 0.45, slope));
       const td = this.trailAt(x, z);
       c.lerp(trail, smoothstep(2.6, 1.0, td) * 0.85);
       const v = 0.92 + noise2(x * 0.25, z * 0.25) * 0.1;
@@ -201,11 +203,76 @@ export class Terrain {
       vertexColors: true,
       map: makeGroundTexture(),
     });
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vTW;')
+        .replace('#include <common>', '#include <common>\nvarying vec3 vTN;')
+        .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvTW = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvTN = normal;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>
+varying vec3 vTW;
+varying vec3 vTN;
+float th(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float tn(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(th(i), th(i + vec2(1.0, 0.0)), u.x), mix(th(i + vec2(0.0, 1.0)), th(i + vec2(1.0, 1.0)), u.x), u.y); }`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+  {
+    vec2 q = vTW.xz;
+    float m = tn(q * 0.03) * 0.55 + tn(q * 0.09 + 3.1) * 0.3 + tn(q * 0.4 + 7.7) * 0.15;
+    vec3 c = diffuseColor.rgb * (0.86 + 0.28 * m);
+    // fine grit up close
+    c *= 0.95 + 0.1 * tn(q * 2.3);
+    // on slopes: rock strata, cracks, and moss creeping over the flatter ledges
+    float sl = 1.0 - normalize(vTN).y;
+    float rk = smoothstep(0.16, 0.42, sl);
+    if (rk > 0.0) {
+      float strata = tn(vec2(vTW.y * 2.2, (vTW.x + vTW.z) * 0.08)) * 0.6 + tn(vec2(vTW.y * 7.0, (vTW.x - vTW.z) * 0.3)) * 0.4;
+      float blotch = tn(q * 1.7 + vTW.y * 0.6) * 0.6 + tn(q * 5.3) * 0.4;
+      vec3 r = c * (0.8 + 0.38 * strata) * (0.86 + 0.28 * blotch);
+      float moss = smoothstep(0.55, 0.25, sl) * smoothstep(0.35, 0.7, tn(q * 0.25 + 11.0));
+      r = mix(r, vec3(0.2, 0.27, 0.11) * (0.8 + 0.4 * strata), moss * 0.7);
+      c = mix(c, r, rk);
+    }
+    diffuseColor.rgb = c;
+  }`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+  {
+    vec2 q = vTW.xz * 1.1;
+    float e = 0.35;
+    float h0 = tn(q), hx = tn(q + vec2(e, 0.0)), hz = tn(q + vec2(0.0, e));
+    vec3 g = vec3(hx - h0, 0.0, hz - h0) * 0.6;
+    normal = normalize(normal - (viewMatrix * vec4(g, 0.0)).xyz);
+  }`);
+    };
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = true;
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
     return mesh;
+  }
+
+  // Darken the ground under tree crowns, around rocks and next to buildings (soft ambient occlusion).
+  // spots: [{ x, z, r, k }] — k = how dark the centre gets.
+  bakeShade(spots) {
+    const n = this.segs + 1;
+    const col = this.mesh.geometry.attributes.color;
+    const shade = new Float32Array(n * n).fill(1);
+    for (const sp of spots) {
+      const i0 = Math.max(0, Math.floor((sp.x - sp.r + HALF) / this.step)), i1 = Math.min(this.segs, Math.ceil((sp.x + sp.r + HALF) / this.step));
+      const j0 = Math.max(0, Math.floor((sp.z - sp.r + HALF) / this.step)), j1 = Math.min(this.segs, Math.ceil((sp.z + sp.r + HALF) / this.step));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const x = -HALF + i * this.step, z = -HALF + j * this.step;
+        const d = Math.hypot(x - sp.x, z - sp.z);
+        if (d >= sp.r) continue;
+        const k = j * n + i;
+        shade[k] *= 1 - sp.k * smoothstep(sp.r, sp.r * 0.25, d);
+      }
+    }
+    for (let k = 0; k < n * n; k++) {
+      const f = Math.max(0.55, shade[k]);
+      col.array[k * 3] *= f; col.array[k * 3 + 1] *= f; col.array[k * 3 + 2] *= f * 1.02;
+    }
+    col.needsUpdate = true;
   }
 
   // Level the ground for a building site: fully flat inside rIn, blending back to the

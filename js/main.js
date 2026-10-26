@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { G, settings, QUALITY, loadProgress } from './state.js';
 import { World } from './world.js';
+import { installSurfaceDetail, SurfaceDetail } from './surface.js';
+installSurfaceDetail();
 import { AnimalManager } from './animals.js';
 import { Tracks } from './tracks.js';
 import { Player, Input } from './player.js';
@@ -17,9 +19,12 @@ import { CabinUpgrades } from './upgrades.js';
 import { Net, seedRandom } from './net.js';
 import { loadLook, lookColor } from './avatar.js';
 import { Crates } from './loot.js';
+import { PostFX } from './post.js';
+import { Ambient } from './ambient.js';
 import { rollRarity, RARITY } from './rarity.js';
 
 // Yield so the loading bar can paint; the timeout keeps loading going in background tabs where rAF pauses
+const _aimDir = new THREE.Vector3();
 const nextFrame = () => new Promise((r) => { let done = false; const go = () => { if (!done) { done = true; setTimeout(r, 0); } }; requestAnimationFrame(go); setTimeout(go, 60); });
 
 async function boot() {
@@ -38,6 +43,7 @@ async function boot() {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.2;
   renderer.shadowMap.enabled = q.shadows;
+  SurfaceDetail.enabled = !!q.post;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.autoClear = false;
   G.renderer = renderer;
@@ -94,6 +100,18 @@ async function boot() {
   const equipment = new Equipment(renderer);
   G.equipment = equipment;
   equipment.setSleeveColor(lookColor('jacket', loadLook().jacket));
+  const post = new PostFX(renderer, scene, camera, equipment, q);
+  G.post = post;
+  const ambient = new Ambient(scene);
+  G.ambient = ambient;
+  world.env.camRef = camera;
+  // draw one frame: through the post-processing chain when it is on, directly otherwise
+  const renderFrame = (showWeapon) => {
+    if (post.enabled) { post.update(world.env); post.render(showWeapon); return; }
+    renderer.clear();
+    renderer.render(scene, camera);
+    if (showWeapon) equipment.render(renderer);
+  };
   equipment.resize(camera.aspect);
   const audio = new AudioSystem();
   G.audio = audio;
@@ -116,11 +134,13 @@ async function boot() {
     const qq = QUALITY[settings.quality];
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, qq.pixelRatio));
     renderer.shadowMap.enabled = qq.shadows;
+    SurfaceDetail.enabled = !!qq.post;
     world.env.sun.castShadow = qq.shadows;
     if (world.env.sun.shadow.map) { world.env.sun.shadow.map.dispose(); world.env.sun.shadow.map = null; }
     world.env.sun.shadow.mapSize.set(qq.shadowSize, qq.shadowSize);
     world.veg.setGrassDensity(qq.grass);
     world.veg.hiDist = qq.shadows ? 12 : -1e9;
+    post.setQuality(qq);
     world.env.setViewDistance(qq.viewDist);
     scene.traverse((o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; }); });
     renderOnce = true;
@@ -130,6 +150,7 @@ async function boot() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     equipment.resize(camera.aspect);
+    post.setSize(window.innerWidth, window.innerHeight);
     renderOnce = true;
   });
 
@@ -424,7 +445,7 @@ async function boot() {
         if (sl.intruder && sl.steps <= sl.intruder.at) { ui.intruderWake(); input.endFrame(); return; }
         if (sl.steps <= 0) { ui.finishSleep(); renderOnce = true; }
       }
-      if (renderOnce) { renderer.clear(); renderer.render(scene, camera); renderOnce = false; }
+      if (renderOnce) { renderFrame(false); renderOnce = false; }
       input.endFrame();
       return;
     }
@@ -459,6 +480,7 @@ async function boot() {
       ui.setPrompt(promptText);
       if (input.wasPressed('KeyE') && interaction && interaction.kind !== 'fire-unlit') doInteraction();
       world.update(dt, camera.position);
+      ambient.update(dt, camera.position, world.env, 1, world.veg);
       if (G.net && !G.net.isHost) animals.netUpdate(dt); else animals.update(dt);
       birds.update(dt);
       poachers.update(dt);
@@ -468,13 +490,30 @@ async function boot() {
       survival.update(dt);
       forageT -= dt;
       if (forageT <= 0) { forageT = 5; forage.update(); world.updateBaits(); cabin.update(); }
-      world.updateStores(world.env.time, player.pos.x, player.pos.z);
+      world.updateStores(world.env.time, player.pos.x, player.pos.z, camera.position.y);
+      // point a weapon at a shopkeeper and they draw theirs on you until you lower it
+      const EW = equipment.W;
+      if (EW && (EW.gun || (equipment.item === 'bow' && equipment.draw > 0.15)) && !player.inBed && !player.swimming) {
+        player.forward(_aimDir);
+        const vh = world.raycastVendors(camera.position, _aimDir, 40);
+        if (vh) {
+          const wall = world.raycastStatic(camera.position, _aimDir, vh.dist);
+          if (wall < 0 || wall >= vh.dist - 0.3) {
+            const st = vh.store;
+            if (st.threat <= 0 && (!st.warnedAt || G.gameTime - st.warnedAt > 12)) {
+              st.warnedAt = G.gameTime;
+              ui.toast(`${st.title}: "Whoa, put that down, friend!" The shopkeeper has a gun on you. Lower your weapon; if you fire, they fire first.`, 'warn');
+            }
+            st.threat = 1.6;
+          }
+        }
+      }
       // warn once each time you walk into a store
       const inStore = world.stores.find((st) => world.isInside(st.bounds, player.pos.x, player.pos.z));
       if (inStore !== lastStore) {
         lastStore = inStore;
         if (inStore) {
-          const def = STORES[inStore.id];
+          const def = { ...STORES[inStore.id], name: inStore.title || STORES[inStore.id].name };
           if (inStore.closed) ui.toast(`${def.name} is closing (open 09:00–21:00). Head out — the door locks behind you.`, 'info');
           else ui.toast(`${def.name}: ${def.vendor} keeps a loaded gun under the counter. Do NOT fire at the shopkeeper — they will shoot back and kill you instantly.`, 'warn');
         }
@@ -501,9 +540,7 @@ async function boot() {
     }
     ui.renderStage(dt);
     if (renderOnce || !G.started) {
-      renderer.clear();
-      renderer.render(scene, camera);
-      if (G.started && !G.inMainMenu && !player.inBed) equipment.render(renderer);
+      renderFrame(G.started && !G.inMainMenu && !player.inBed);
       renderOnce = playing || (G.inMainMenu && !G.menuOpen);
     }
     input.endFrame();

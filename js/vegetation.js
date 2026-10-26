@@ -1,5 +1,6 @@
 // Instanced, chunked vegetation (trees, bushes, rocks, grass, flowers) + spatial hash for collisions.
 import * as THREE from 'three';
+import { enhanceShader, SurfaceDetail } from './surface.js';
 import { colorize, mergeColored, xf, jitterVertices, shadeVertical } from './geo.js';
 import { mulberry32, smoothstep, noise2 } from './utils.js';
 import { HALF, riverDistance, MEADOWS } from './terrain.js';
@@ -247,6 +248,75 @@ function makeGrassTuft(rng) {
   return g;
 }
 
+// Fern: fronds arching out from the centre, each a tapering strip of leaflets
+function makeFern() {
+  const pos = [], col = [];
+  const dark = new THREE.Color(0x24461c), light = new THREE.Color(0x6a9a3a);
+  const fronds = 9;
+  for (let k = 0; k < fronds; k++) {
+    const a = (k / fronds) * Math.PI * 2 + (k % 2) * 0.2;
+    const len = 0.75 + (k % 3) * 0.15, rise = 0.45 + (k % 2) * 0.12;
+    const dx = Math.cos(a), dz = Math.sin(a), px = -dz, pz = dx;
+    const steps = 5;
+    let prev = null;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = dx * len * t, z = dz * len * t, y = Math.sin(t * Math.PI * 0.85) * rise * (1 - t * 0.25) + 0.02;
+      const w = 0.11 * Math.sin(Math.PI * Math.min(1, t * 1.1)) + 0.012;
+      const L = [x + px * w, y - 0.02, z + pz * w], R = [x - px * w, y - 0.02, z - pz * w], C = [x, y, z];
+      const c = dark.clone().lerp(light, t * 0.8 + 0.1);
+      if (prev) {
+        for (const [p0, p1, p2] of [[prev.L, prev.C, L], [prev.C, C, L], [prev.C, prev.R, C], [prev.R, R, C]]) {
+          pos.push(...p0, ...p1, ...p2);
+          for (let q = 0; q < 3; q++) col.push(c.r, c.g, c.b);
+        }
+      }
+      prev = { L, R, C };
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  const n = g.attributes.normal.array;
+  for (let i = 0; i < n.length; i += 3) { n[i] *= 0.3; n[i + 1] = Math.abs(n[i + 1]) * 0.7 + 0.5; n[i + 2] *= 0.3; }
+  return g;
+}
+
+// Fallen log: bark, a mossy top and pale broken ends
+function makeLog() {
+  const g = new THREE.CylinderGeometry(0.2, 0.24, 3.2, 10, 4);
+  g.rotateZ(Math.PI / 2);
+  g.translate(0, 0.2, 0);
+  const parts = [paint(g, (x, y, z, nx, ny) => {
+    const end = Math.abs(nx) > 0.9;
+    if (end) return mixC(0x9a8058, 0x6a5238, Math.hypot(y - 0.2, z) * 4);
+    const moss = Math.max(0, ny - 0.45) * 1.6 * (0.6 + 0.4 * Math.sin(x * 3.1));
+    return mixC(mixC(0x4a3a2a, 0x5e4a36, hashN(Math.round(x * 6), Math.round(Math.atan2(z, y - 0.2) * 3), 1)), 0x4a6a2a, moss);
+  })];
+  const br = new THREE.CylinderGeometry(0.04, 0.07, 0.7, 6);
+  br.translate(0, 0.35, 0); br.rotateZ(-0.9); br.translate(0.6, 0.25, 0.1);
+  parts.push(paint(br, () => 0x4e3e2c));
+  return mergeColored(parts);
+}
+
+// Tree stump with a cut top showing growth rings
+function makeStump() {
+  const g = new THREE.CylinderGeometry(0.3, 0.42, 0.55, 12, 1);
+  g.translate(0, 0.27, 0);
+  const parts = [paint(g, (x, y, z, nx, ny) => {
+    if (ny > 0.9) { const r = Math.hypot(x, z); return Math.sin(r * 60) > 0.3 ? 0xb0905e : 0x8e7048; }
+    return mixC(0x4a3a2a, 0x5e4a36, hashN(Math.round(Math.atan2(z, x) * 4), Math.round(y * 8), 2));
+  })];
+  for (let i = 0; i < 4; i++) {
+    const a = i * 1.7, root = new THREE.ConeGeometry(0.1, 0.5, 5);
+    root.rotateZ(Math.PI / 2 + 0.9); root.translate(Math.cos(a) * 0.38, 0.06, Math.sin(a) * 0.38);
+    root.rotateY(-a);
+    parts.push(paint(root, () => 0x4a3a2a));
+  }
+  return mergeColored(parts);
+}
+
 function makeFlower() {
   const parts = [];
   parts.push(colorize(xf(new THREE.CylinderGeometry(0.008, 0.01, 0.35, 3), 0, 0.175, 0), 0x4a6a2a));
@@ -258,6 +328,7 @@ function makeFlower() {
 
 function addSway(material, strength, uniforms) {
   material.onBeforeCompile = (shader) => {
+    if (SurfaceDetail.enabled && material.userData.detailKind) enhanceShader(shader, material.userData.detailKind);
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uWind = uniforms.uWind;
     shader.vertexShader = 'uniform float uTime;\nuniform vec2 uWind;\n' + shader.vertexShader.replace(
@@ -269,8 +340,15 @@ function addSway(material, strength, uniforms) {
         float ph = 0.0;
       #endif
       float sway = (sin(uTime * 1.7 + ph) * 0.6 + sin(uTime * 3.1 + ph * 1.7) * 0.4) * ${strength.toFixed(3)} * (0.4 + length(uWind) * 0.12);
-      transformed.x += (sway + uWind.x * 0.015) * position.y;
-      transformed.z += (sway * 0.6 + uWind.y * 0.015) * position.y;`
+      #ifdef USE_INSTANCING
+        vec2 wpos = instanceMatrix[3].xz;
+      #else
+        vec2 wpos = vec2(0.0);
+      #endif
+      float wl = length(uWind) + 1e-4;
+      float gust = smoothstep(0.35, 1.0, sin(dot(wpos, uWind / wl) * 0.09 - uTime * 1.5) * 0.5 + 0.5) * min(wl, 8.0);
+      transformed.x += (sway + uWind.x * 0.015 + gust * uWind.x / wl * ${(strength * 0.9).toFixed(3)}) * position.y;
+      transformed.z += (sway * 0.6 + uWind.y * 0.015 + gust * uWind.y / wl * ${(strength * 0.9).toFixed(3)}) * position.y;`
     );
   };
 }
@@ -287,9 +365,17 @@ export class Vegetation {
     const rng = mulberry32(777);
 
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.treeMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.treeMat.userData.detailKind = 'foliage';
+    addSway(this.treeMat, 0.012, this.uniforms);
+    this.bushMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.bushMat.userData.detailKind = 'foliage';
+    addSway(this.bushMat, 0.04, this.uniforms);
     this.grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    this.grassMat.userData.noDetail = true;
     addSway(this.grassMat, 0.12, this.uniforms);
     this.flowerMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.flowerMat.userData.noDetail = true;
     addSway(this.flowerMat, 0.1, this.uniforms);
 
     // light models for distance, detailed ones for trees near the camera
@@ -297,7 +383,11 @@ export class Vegetation {
       pine: makePine(rng), broad: makeBroadleaf(rng), birch: makeBirch(rng),
       bush: makeBush(rng), rock: makeRock(rng),
     };
-    this.geosHi = { pine: makePineHi(), broad: makeBroadleafHi(), birch: makeBirchHi(), bush: makeBushHi(), rock: makeRockHi() };
+    this.geos.fern = makeFern(); this.geos.log = makeLog(); this.geos.stump = makeStump();
+    this.geosHi = { pine: makePineHi(), broad: makeBroadleafHi(), birch: makeBirchHi(), bush: makeBushHi(), rock: makeRockHi(), fern: this.geos.fern, log: this.geos.log, stump: this.geos.stump };
+    this.fernMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    this.fernMat.userData.noDetail = true;
+    addSway(this.fernMat, 0.06, this.uniforms);
     this.hiDist = quality.shadows ? 12 : -1e9; // no detailed trees on the low setting
     this.grassGeo = makeGrassTuft(rng);
     this.flowerGeo = makeFlower();
@@ -376,6 +466,24 @@ export class Vegetation {
       bucket('rock', px, pz).push({ x: px, y: h - s * 0.15, z: pz, s, r: rng() * 6.28 });
       if (s > 0.55) this.addToHash({ x: px, z: pz, r: s * 0.85, h: s * 0.7, kind: 'rock' });
     }
+    // forest floor: ferns, fallen logs and old stumps
+    for (let i = 0; i < 5200; i++) {
+      const px = (rng() * 2 - 1) * (HALF - 8), pz = (rng() * 2 - 1) * (HALF - 8);
+      const d = T.densityAt(px, pz), h = T.getHeight(px, pz);
+      if (h < 0.7 || rng() > (d - 0.3) * 1.4) continue;
+      const roll = rng();
+      if (roll < 0.9) {
+        bucket('fern', px, pz).push({ x: px, y: h - 0.03, z: pz, s: 0.7 + rng() * 0.7, r: rng() * 6.28 });
+      } else if (roll < 0.95) {
+        const r = rng() * 6.28, s = 0.8 + rng() * 0.5;
+        bucket('log', px, pz).push({ x: px, y: h - 0.08, z: pz, s, r });
+        for (const t of [-1.2, 0, 1.2]) this.addToHash({ x: px + Math.cos(r) * t * s, z: pz - Math.sin(r) * t * s, r: 0.3 * s, h: 0.5 * s, kind: 'rock' });
+      } else {
+        const s = 0.7 + rng() * 0.6;
+        bucket('stump', px, pz).push({ x: px, y: h - 0.05, z: pz, s, r: rng() * 6.28 });
+        this.addToHash({ x: px, z: pz, r: 0.38 * s, h: 0.55 * s, kind: 'rock' });
+      }
+    }
     this.bushHash = new Map();
     for (const b of this.bushes) {
       const k = this.key(Math.floor(b.x / 16), Math.floor(b.z / 16));
@@ -388,10 +496,11 @@ export class Vegetation {
     const up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
     for (const k in buckets) {
       const b = buckets[k];
-      const mesh = new THREE.InstancedMesh(this.geos[b.type], this.material, b.items.length);
+      const mat = b.type === 'rock' || b.type === 'log' || b.type === 'stump' ? this.material : b.type === 'bush' ? this.bushMat : b.type === 'fern' ? this.fernMat : this.treeMat;
+      const mesh = new THREE.InstancedMesh(this.geos[b.type], mat, b.items.length);
       b.items.forEach((it, i) => {
         q.setFromAxisAngle(up, it.r);
-        const sy = b.type === 'rock' ? it.s * (0.7 + (i % 5) * 0.12) : it.s * (0.9 + (i % 7) * 0.04);
+        const sy = b.type === 'rock' ? it.s * (0.7 + (i % 5) * 0.12) : b.type === 'log' || b.type === 'stump' ? it.s : it.s * (0.9 + (i % 7) * 0.04);
         m4.compose(pv.set(it.x, it.y, it.z), q, sv.set(it.s, sy, it.s));
         mesh.setMatrixAt(i, m4);
         const tint = 0.85 + ((i * 7919) % 100) / 100 * 0.3;
@@ -401,14 +510,14 @@ export class Vegetation {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       mesh.computeBoundingSphere();
-      mesh.castShadow = b.type !== 'bush';
+      mesh.castShadow = b.type !== 'bush' && b.type !== 'fern';
       mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
       this.scene.add(mesh);
       this.chunks.push({
         mesh, type: b.type, hi: false,
         x: -HALF + (b.cx + 0.5) * CHUNK, z: -HALF + (b.cz + 0.5) * CHUNK,
-        small: b.type === 'bush' || (b.type === 'rock'),
+        small: b.type === 'bush' || b.type === 'rock' || b.type === 'fern' || b.type === 'log' || b.type === 'stump',
       });
     }
 
@@ -418,7 +527,7 @@ export class Vegetation {
       for (let cx = 0; cx < nG; cx++) {
         const items = [], flowers = [];
         const x0 = -HALF + cx * GRASS_CHUNK, z0 = -HALF + cz * GRASS_CHUNK;
-        const tries = 650;
+        const tries = 820;
         for (let i = 0; i < tries; i++) {
           const px = x0 + rng() * GRASS_CHUNK, pz = z0 + rng() * GRASS_CHUNK;
           const h = T.getHeight(px, pz);
@@ -440,7 +549,12 @@ export class Vegetation {
           q.setFromAxisAngle(up, it.r);
           m4.compose(pv.set(it.x, it.y, it.z), q, sv.set(it.s, it.s * (0.8 + (i % 5) * 0.1), it.s));
           gm.setMatrixAt(i, m4);
+          // same dry-patch pattern as the ground colours, plus a little per-tuft variety
+          const dn = noise2(it.x * 0.011 + 9, it.z * 0.011) * 0.5 + 0.5, dryK = smoothstep(0.55, 0.85, dn) * 0.7;
+          const v = 0.88 + ((i * 7919) % 100) / 100 * 0.24;
+          gm.setColorAt(i, col.setRGB(v * (1 + dryK * 0.28), v * (1 + dryK * 0.08), v * (1 - dryK * 0.35)));
         });
+        if (gm.instanceColor) gm.instanceColor.needsUpdate = true;
         gm.computeBoundingSphere();
         gm.matrixAutoUpdate = false;
         gm.receiveShadow = true;
@@ -494,7 +608,7 @@ export class Vegetation {
     this.uniforms.uWind.value.set(wind.x, wind.z);
     for (const c of this.chunks) {
       const d = Math.hypot(c.x - camPos.x, c.z - camPos.z) - CHUNK * 0.71;
-      c.mesh.visible = d < (c.small ? viewDist * 0.6 : viewDist);
+      c.mesh.visible = d < (c.type === 'fern' ? 40 : c.small ? viewDist * 0.6 : viewDist);
       const hi = d < this.hiDist;
       if (hi !== c.hi) { c.hi = hi; c.mesh.geometry = hi ? this.geosHi[c.type] : this.geos[c.type]; }
     }

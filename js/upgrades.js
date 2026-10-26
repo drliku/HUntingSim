@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { G } from './state.js';
 import { colorize, mergeColored, xf, ellipsoid, cylinderBetween } from './geo.js';
+import { box, shade, hash, shingles, endGrain, STONES } from './buildings.js';
 
 export const UPGRADE_LIST = [
   { id: 'bed', name: 'Feather bed and quilts', price: 60, desc: 'A carved bed, patchwork quilt and a bedside candle. Sleep restores more rest and twice the health; lying down recovers rest faster.' },
@@ -11,6 +12,8 @@ export const UPGRADE_LIST = [
   { id: 'gunrack', name: 'Gun rack and ammo locker', price: 75, desc: 'A wall rack and an ammunition crate by the door. Restock ammunition at the cabin without walking to town.' },
   { id: 'porch', name: 'Covered porch', price: 70, desc: 'A deck with a roof, railings, lanterns, firewood and a rocking chair where you can sit and rest while watching the meadow.' },
   { id: 'fortify', name: 'Iron-bound door and shutters', price: 90, desc: 'Iron straps, window bars and shutters. Inside this cabin predators and poachers cannot reach you while you are awake, and the heavy door latches itself shut when you go to sleep.' },
+  { id: 'renovate', name: 'Renovation · house level 2', price: 120, desc: 'Painted board-and-batten gables, a green door and window frames, flower boxes, a carved house sign, a weathervane and a flagstone path. Sleeping restores 20% more rest and extra health.' },
+  { id: 'lodge', name: 'Hunting lodge · house level 3', price: 260, needs: 'renovate', desc: 'A second log storey with a balcony, a dormer and a new shingled roof, a tall stone chimney and a trophy rack on the gable. The butcher pays 10% more for your meat once your lodge is known in town.' },
   { id: 'garden', name: 'Vegetable garden', price: 55, desc: 'A fenced garden with raised beds and a rain barrel. Every morning three fresh, safe vegetables are ready to pick.' },
 ];
 
@@ -332,6 +335,203 @@ export class CabinUpgrades {
       active: () => this.gardenReady() > 0,
       text: () => `<kbd>E</kbd>Harvest the garden (${this.gardenReady()} vegetables)`,
     });
+  }
+
+  // ---------- house level 2: renovation ----------
+  build_renovate() {
+    const h = this.home, T = this.world.terrain, { W, D, H, rh, dx, dw, dh } = h, P = [], U = [];
+    const paint = 0x2f5a3c, cream = 0xd9ccaa, glass = 0x24343e;
+    // board-and-batten siding and a round vent on both gables
+    for (const s of [-1, 1]) {
+      for (let z = -D / 2 + 0.11; z < D / 2; z += 0.22) {
+        const hg = rh * (1 - Math.abs(z) / (D / 2)) - 0.04;
+        if (hg < 0.06) continue;
+        box(U, 0.03, hg, 0.21, s * (W / 2 + 0.04), H + hg / 2, z, shade(cream, 0.94 + hash(z, s) * 0.1));
+        box(U, 0.045, hg, 0.04, s * (W / 2 + 0.06), H + hg / 2, z + 0.11, shade(cream, 0.76));
+      }
+      U.push(colorize(xf(new THREE.CylinderGeometry(0.18, 0.18, 0.05, 14), s * (W / 2 + 0.08), H + rh * 0.42, 0, 0, 0, Math.PI / 2), paint));
+      U.push(colorize(xf(new THREE.CylinderGeometry(0.13, 0.13, 0.06, 14), s * (W / 2 + 0.085), H + rh * 0.42, 0, 0, 0, Math.PI / 2), 0x1e2a30));
+    }
+    // weathervane on the ridge
+    const vx = -W / 2 + 0.7, vy = H + rh + 0.15;
+    U.push(cylinderBetween(new THREE.Vector3(vx, vy, 0), new THREE.Vector3(vx, vy + 0.8, 0), 0.018, 0.013, 6, iron));
+    box(U, 0.5, 0.02, 0.02, vx, vy + 0.45, 0, iron);
+    box(U, 0.02, 0.02, 0.5, vx, vy + 0.45, 0, iron);
+    box(U, 0.36, 0.14, 0.015, vx, vy + 0.72, 0, iron);
+    box(U, 0.1, 0.13, 0.015, vx + 0.16, vy + 0.83, 0, iron);
+    box(U, 0.12, 0.22, 0.015, vx - 0.2, vy + 0.8, 0, iron, 0, 0, 0.5);
+    // painted window frames with a cross mullion, and flower boxes underneath
+    const flowers = [0xc8303a, 0xe8c040, 0xf0ece0, 0x8a4ab0, 0xe86a8a];
+    for (const s of [-1, 1]) {
+      const wx = s * (W / 2 + 0.2);
+      box(P, 0.012, 0.78, 0.9, wx - s * 0.006, 1.45, -0.3, glass);
+      for (const [bh, bd, by, bz] of [[0.07, 1.06, 0.43, 0], [0.07, 1.06, -0.43, 0], [0.86, 0.07, 0, -0.5], [0.86, 0.07, 0, 0.5], [0.78, 0.035, 0, 0], [0.035, 0.9, 0, 0]]) box(P, 0.035, bh, bd, wx, 1.45 + by, -0.3 + bz, paint);
+      const fx = s * (W / 2 + 0.36);
+      box(P, 0.24, 0.2, 1.1, fx, 0.84, -0.3, paint);
+      box(P, 0.2, 0.02, 1.04, fx, 0.945, -0.3, 0x3a2a1c);
+      for (let k = 0; k < 9; k++) {
+        const fz = -0.76 + k * 0.115, j = hash(k, s);
+        P.push(ellipsoid(fx, 0.99, fz, 0.07, 0.06, 0.07, k % 2 ? 0x4a7a34 : 0x3e6a2c));
+        P.push(ellipsoid(fx + (j - 0.5) * 0.08, 1.05 + j * 0.04, fz + 0.02, 0.035, 0.03, 0.035, flowers[(k + (s > 0 ? 2 : 0)) % flowers.length]));
+      }
+    }
+    // carved house sign over the door
+    box(P, 1.05, 0.26, 0.04, dx, dh + 0.27, h.D / 2 + 0.17, 0x6a4a2e);
+    box(P, 0.85, 0.07, 0.01, dx, dh + 0.27, h.D / 2 + 0.195, cream);
+    // flagstone path from the step out into the clearing
+    for (let i = 0; i < 11; i++) {
+      const pz = D / 2 + 1.0 + i * 0.62, px = dx + Math.sin(i * 0.7) * 0.25;
+      const gy = T.getHeight(h.x + px, h.z + pz) - h.floor;
+      P.push(colorize(xf(new THREE.CylinderGeometry(0.3 + hash(i, 1) * 0.08, 0.32, 0.08, 7), px, gy + 0.015, pz, 0, hash(i, 2) * 3, 0), STONES[i % 4]));
+    }
+    this.mesh(P);
+    this.renoUpper = this.mesh(U);
+    if (this.built.lodge) this.renoUpper.visible = false;
+    // a painted door (moves with it)
+    const door = new THREE.Mesh(colorize(xf(new THREE.BoxGeometry(dw - 0.09, dh - 0.09, 0.066), (dw - 0.06) / 2, (dh - 0.06) / 2 + 0.03, 0), paint), new THREE.MeshLambertMaterial({ vertexColors: true }));
+    h.door.pivot.add(door);
+  }
+
+  // ---------- house level 3: hunting lodge ----------
+  build_lodge() {
+    const h = this.home, c = h.cabin, { W, D, H, dx, t } = h, P = [];
+    const paint = 0x2f5a3c, cream = 0xd9ccaa, glass = 0x24343e, mortar = 0xcfc4ad, sill = 0x6a5038;
+    // the old roof comes off
+    if (c.roof) c.roof.visible = false;
+    if (c.deco) c.deco.roof.visible = false;
+    if (this.renoUpper) this.renoUpper.visible = false;
+    const UH = 2.0, U = H + UH, rh = 1.7, run = D / 2 + 0.5, slope = Math.atan2(rh, run), bl = Math.hypot(run, rh) + 0.1;
+    // a second storey of logs with chinking and end grain
+    const logC = [0x7a5a3a, 0x6e5034];
+    const log = (len, px, py, pz, alongX, col) => P.push(colorize(xf(new THREE.CylinderGeometry(0.13, 0.13, len, 7), px, py, pz, alongX ? 0 : Math.PI / 2, 0, alongX ? Math.PI / 2 : 0), col));
+    for (let i = 0; i < 8; i++) {
+      const y = H + 0.13 + i * 0.25;
+      for (const s of [-1, 1]) {
+        log(W + 0.45, 0, y, s * (D / 2 + 0.02), true, logC[i % 2]);
+        log(D + 0.45, s * (W / 2 + 0.02), y + 0.12, 0, false, logC[(i + 1) % 2]);
+        if (i < 7) {
+          box(P, W, 0.05, 0.19, 0, y + 0.125, s * (D / 2 + 0.02), mortar);
+          box(P, 0.19, 0.05, D, s * (W / 2 + 0.02), y + 0.245, 0, mortar);
+        }
+        for (const sx of [-1, 1]) {
+          endGrain(P, sx * (W / 2 + 0.235), y, s * (D / 2 + 0.02), true);
+          endGrain(P, sx * (W / 2 + 0.02), y + 0.12, s * (D / 2 + 0.235), false);
+        }
+      }
+    }
+    // a plank ceiling downstairs
+    box(P, W - 2 * t, 0.05, D - 2 * t, 0, H - 0.02, 0, 0x8a6a48);
+    // board-and-batten gables with an attic window and a trophy rack
+    for (const s of [-1, 1]) {
+      for (let z = -run + 0.45; z < run - 0.4; z += 0.22) {
+        const hg = rh * (1 - Math.abs(z) / run) - 0.05;
+        if (hg < 0.06) continue;
+        box(P, 0.03, hg, 0.21, s * (W / 2 + 0.12), U + hg / 2, z, shade(cream, 0.94 + hash(z, s) * 0.1));
+        box(P, 0.045, hg, 0.04, s * (W / 2 + 0.14), U + hg / 2, z + 0.11, shade(cream, 0.76));
+      }
+      const gx = s * (W / 2 + 0.16);
+      box(P, 0.012, 0.42, 0.5, gx - s * 0.01, U + 0.48, 0, glass);
+      for (const [bh, bd, by, bz] of [[0.06, 0.62, 0.24, 0], [0.06, 0.62, -0.24, 0], [0.48, 0.06, 0, -0.28], [0.48, 0.06, 0, 0.28], [0.42, 0.03, 0, 0]]) box(P, 0.035, bh, bd, gx, U + 0.48 + by, bz, paint);
+      // antlers on a shield
+      const ax = s * (W / 2 + 0.18), ay = U + 1.0;
+      box(P, 0.04, 0.32, 0.26, ax, ay, 0, 0x5a3e26);
+      P.push(ellipsoid(ax + s * 0.05, ay - 0.02, 0, 0.06, 0.11, 0.07, 0xe0d4b8));
+      const bone = 0xd8c8a4, V = (a, b, cz) => new THREE.Vector3(ax + s * a, ay + b, cz);
+      for (const sz of [-1, 1]) {
+        const pts = [V(0.06, 0.07, sz * 0.05), V(0.12, 0.2, sz * 0.2), V(0.15, 0.38, sz * 0.28), V(0.12, 0.52, sz * 0.22)];
+        for (let k = 0; k < 3; k++) P.push(cylinderBetween(pts[k], pts[k + 1], 0.02 - k * 0.004, 0.017 - k * 0.004, 6, bone));
+        for (let k = 1; k < 3; k++) P.push(cylinderBetween(pts[k], pts[k].clone().add(new THREE.Vector3(s * 0.04, 0.16, -sz * 0.03)), 0.012, 0.007, 5, bone));
+      }
+    }
+    // new steeper shingled roof
+    const roofCols = [0x4a3f36, 0x3e352d, 0x54473c, 0x463b32, 0x3a3029, 0x5a4c40];
+    for (const s of [-1, 1]) {
+      box(P, W + 1.0, 0.12, bl, 0, U + rh / 2 + 0.05, s * run / 2, 0x3b3632, s * slope);
+      const m4 = new THREE.Matrix4().compose(new THREE.Vector3(0, U + rh / 2 + 0.05, s * run / 2), new THREE.Quaternion().setFromEuler(new THREE.Euler(s * slope, 0, 0)), new THREE.Vector3(1, 1, 1));
+      shingles(P, W + 1.0, bl, m4, roofCols, s);
+      box(P, W + 1.05, 0.16, 0.04, 0, U - 0.02, s * (run + 0.06), 0x3a2c20);
+    }
+    box(P, W + 1.1, 0.2, 0.2, 0, U + rh + 0.1, 0, 0x2e2722, Math.PI / 4);
+    // a dormer on the front slope
+    const dX = -W / 4, dz0 = 0.5, dz1 = D / 2 - 0.05, dw2 = 1.3, dwh = 1.15, drh = 0.38;
+    for (const sx of [-1, 1]) box(P, 0.1, dwh, dz1 - dz0, dX + sx * dw2 / 2, U + dwh / 2, (dz0 + dz1) / 2, cream);
+    box(P, dw2 + 0.1, dwh, 0.1, dX, U + dwh / 2, dz1, cream);
+    box(P, 0.6, 0.5, 0.012, dX, U + 0.74, dz1 + 0.055, glass);
+    for (const [bw, bh, bx, by] of [[0.72, 0.06, 0, 0.28], [0.72, 0.06, 0, -0.28], [0.06, 0.5, -0.33, 0], [0.06, 0.5, 0.33, 0], [0.03, 0.5, 0, 0]]) box(P, bw, bh, 0.035, dX + bx, U + 0.74 + by, dz1 + 0.07, paint);
+    const tri = new THREE.BufferGeometry();
+    tri.setAttribute('position', new THREE.Float32BufferAttribute([-dw2 / 2 - 0.05, 0, 0, dw2 / 2 + 0.05, 0, 0, 0, drh, 0], 3));
+    tri.computeVertexNormals();
+    tri.translate(dX, U + dwh, dz1 + 0.05);
+    P.push(colorize(tri, cream));
+    const dh2 = dw2 / 2 + 0.15, ds = Math.atan2(drh, dh2), dbl = Math.hypot(dh2, drh) + 0.08, dlen = dz1 - dz0 + 0.35;
+    for (const sx of [-1, 1]) {
+      const pos = new THREE.Vector3(dX + sx * dh2 / 2, U + dwh + drh / 2 + 0.04, dz0 + dlen / 2);
+      box(P, dbl, 0.08, dlen, pos.x, pos.y, pos.z, 0x3b3632, 0, 0, -sx * ds);
+      const m4 = new THREE.Matrix4().compose(pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, -sx * ds)), new THREE.Vector3(1, 1, 1));
+      m4.multiply(new THREE.Matrix4().makeRotationY(Math.PI / 2)).multiply(new THREE.Matrix4().makeTranslation(0, -0.02, 0));
+      shingles(P, dlen, dbl, m4, roofCols, sx, 0.3);
+    }
+    // upstairs windows
+    const winZ = (x, y, w, hh) => {
+      box(P, w, hh, 0.012, x, y, D / 2 + 0.155, glass);
+      for (const [bw, bh, bx, by] of [[w + 0.12, 0.06, 0, hh / 2], [w + 0.12, 0.06, 0, -hh / 2], [0.06, hh, -w / 2, 0], [0.06, hh, w / 2, 0], [0.03, hh, 0, 0], [w, 0.03, 0, 0]]) box(P, bw, bh, 0.035, x + bx, y + by, D / 2 + 0.17, paint);
+      box(P, w + 0.22, 0.05, 0.14, x, y - hh / 2 - 0.05, D / 2 + 0.2, sill);
+    };
+    winZ(-1.75, H + 1.05, 0.8, 0.85);
+    winZ(W / 2 - 0.5, H + 1.05, 0.62, 0.85);
+    for (const s of [-1, 1]) {
+      const wx = s * (W / 2 + 0.155);
+      box(P, 0.012, 0.85, 0.9, wx, H + 1.05, 0, glass);
+      for (const [bh, bd, by, bz] of [[0.06, 1.02, 0.425, 0], [0.06, 1.02, -0.425, 0], [0.85, 0.06, 0, -0.45], [0.85, 0.06, 0, 0.45], [0.85, 0.03, 0, 0], [0.03, 0.9, 0, 0]]) box(P, 0.035, bh, bd, wx + s * 0.015, H + 1.05 + by, bz, paint);
+      box(P, 0.14, 0.05, 1.12, wx + s * 0.045, H + 0.58, 0, sill);
+    }
+    // a balcony over the door: cantilevered joists, deck, railings and a door out onto it
+    const bz0 = D / 2 + 0.15, bdep = 1.15, bw = 2.6, by = H + 0.12;
+    for (const jx of [dx - bw / 2 + 0.15, dx, dx + bw / 2 - 0.15]) {
+      box(P, 0.14, 0.16, bdep + 0.12, jx, by - 0.12, bz0 + bdep / 2 + 0.02, 0x5e432b);
+      endGrain(P, jx, by - 0.12, bz0 + bdep + 0.09, false);
+    }
+    box(P, bw, 0.08, bdep, dx, by, bz0 + bdep / 2, 0x8a6a48);
+    for (let x = dx - bw / 2 + 0.15; x < dx + bw / 2; x += 0.18) box(P, 0.012, 0.082, bdep, x, by, bz0 + bdep / 2, 0x5e4630);
+    const fz = bz0 + bdep - 0.05;
+    box(P, bw, 0.07, 0.07, dx, by + 0.95, fz, woodL);
+    for (let x = dx - bw / 2 + 0.06; x <= dx + bw / 2 - 0.05; x += 0.16) box(P, 0.04, 0.9, 0.04, x, by + 0.5, fz, wood);
+    for (const sx of [-1, 1]) {
+      const rx = dx + sx * (bw / 2 - 0.04);
+      box(P, 0.07, 0.07, bdep, rx, by + 0.95, bz0 + bdep / 2, woodL);
+      for (let z = bz0 + 0.12; z < fz; z += 0.16) box(P, 0.04, 0.9, 0.04, rx, by + 0.5, z, wood);
+    }
+    box(P, 0.92, 1.78, 0.04, dx, by + 0.94, D / 2 + 0.16, paint);
+    for (const yy of [0.5, 1.3]) box(P, 0.84, 0.08, 0.05, dx, by + yy, D / 2 + 0.17, 0x24402c);
+    for (const sx of [-1, 1]) box(P, 0.08, 1.86, 0.06, dx + sx * 0.5, by + 0.97, D / 2 + 0.17, 0x5e432b);
+    box(P, 1.1, 0.08, 0.07, dx, by + 1.9, D / 2 + 0.17, 0x5e432b);
+    // wall lanterns beside the balcony door
+    for (const lx of [dx - 0.78, dx + 0.78]) {
+      box(P, 0.04, 0.2, 0.12, lx, by + 1.35, D / 2 + 0.2, iron);
+      box(P, 0.14, 0.03, 0.14, lx, by + 1.23, D / 2 + 0.3, iron);
+      box(P, 0.14, 0.03, 0.14, lx, by + 1.45, D / 2 + 0.3, iron);
+    }
+    // a tall stone chimney through the new roof
+    if (h.stove) {
+      const sx = h.stove.x, sz = h.stove.z, top = U + 0.11 + rh * (1 - Math.abs(sz) / run) + 1.0;
+      let k = 0;
+      for (let y = H + 1.2; y < top; y += 0.17, k++) box(P, 0.7 + hash(k, 1) * 0.05, 0.16, 0.7 + hash(k, 2) * 0.05, sx, y + 0.08, sz, STONES[(k * 3) % 4], 0, (hash(k, 3) - 0.5) * 0.06, 0);
+      box(P, 0.82, 0.07, 0.82, sx, top + 0.05, sz, 0x55514b);
+      box(P, 0.38, 0.02, 0.38, sx, top + 0.09, sz, 0x141210);
+    }
+    // weathervane on the new ridge
+    const vx = -W / 2 + 0.7, vy = U + rh + 0.15;
+    P.push(cylinderBetween(new THREE.Vector3(vx, vy, 0), new THREE.Vector3(vx, vy + 0.8, 0), 0.018, 0.013, 6, iron));
+    box(P, 0.5, 0.02, 0.02, vx, vy + 0.45, 0, iron);
+    box(P, 0.02, 0.02, 0.5, vx, vy + 0.45, 0, iron);
+    box(P, 0.36, 0.14, 0.015, vx, vy + 0.72, 0, iron);
+    box(P, 0.1, 0.13, 0.015, vx + 0.16, vy + 0.83, 0, iron);
+    box(P, 0.12, 0.22, 0.015, vx - 0.2, vy + 0.8, 0, iron, 0, 0, 0.5);
+    this.mesh(P);
+    for (const lx of [dx - 0.78, dx + 0.78]) {
+      this.glow(lx, by + 1.34, D / 2 + 0.3, 0.055);
+      this.world.lanterns.push({ x: h.x + lx, y: h.floor + by + 1.34, z: h.z + D / 2 + 0.4 });
+    }
   }
 
   gardenReady() {

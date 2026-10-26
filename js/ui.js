@@ -19,6 +19,47 @@ const $ = (id) => document.getElementById(id);
 const PX_PER_DEG = 4;
 const fmtWeight = (kg) => (kg < 10 ? `${kg.toFixed(1)} kg` : `${Math.round(kg)} kg`);
 
+// Map icons: a round badge per kind of place, drawn once and reused on both maps
+const ICON_STYLE = {
+  home: ['#d9733a', 'house'], homestead: ['#77756c', 'house'], hut: ['#8a6a44', 'house'],
+  gun: ['#b8322a', 'cross'], butcher: ['#9a3a2e', '🥩'], general: ['#3a7a5a', '🛒'],
+  stand: ['#4e6474', 'tower'], outpost: ['#c89a3a', '🚩'],
+};
+const _icons = new Map();
+function mapIcon(kind, color) {
+  const key = kind + (color || '');
+  if (_icons.has(key)) return _icons.get(key);
+  const [bg, glyph] = ICON_STYLE[kind] || ['#666', 'house'];
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 48;
+  const c = cv.getContext('2d');
+  c.shadowColor = 'rgba(0,0,0,.6)'; c.shadowBlur = 4;
+  c.beginPath(); c.arc(24, 24, 19, 0, Math.PI * 2);
+  c.fillStyle = color || bg; c.fill();
+  c.shadowBlur = 0;
+  c.lineWidth = 3; c.strokeStyle = '#f4ecdc'; c.stroke();
+  c.fillStyle = c.strokeStyle = '#fff';
+  if (glyph === 'house') {
+    c.beginPath(); c.moveTo(13, 24); c.lineTo(24, 13); c.lineTo(35, 24); c.lineTo(32, 24); c.lineTo(32, 34); c.lineTo(16, 34); c.lineTo(16, 24); c.closePath(); c.fill();
+    c.fillStyle = color || bg; c.fillRect(22, 27, 5, 7);
+  } else if (glyph === 'cross') {
+    c.lineWidth = 2.6; c.beginPath(); c.arc(24, 24, 8, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.moveTo(24, 11); c.lineTo(24, 19); c.moveTo(24, 29); c.lineTo(24, 37); c.moveTo(11, 24); c.lineTo(19, 24); c.moveTo(29, 24); c.lineTo(37, 24); c.stroke();
+    c.beginPath(); c.arc(24, 24, 1.8, 0, Math.PI * 2); c.fill();
+  } else if (glyph === 'tower') {
+    c.lineWidth = 2.4; c.fillRect(15, 13, 18, 5);
+    c.beginPath(); c.moveTo(17, 18); c.lineTo(14, 36); c.moveTo(31, 18); c.lineTo(34, 36); c.moveTo(16, 26); c.lineTo(32, 26); c.moveTo(16, 26); c.lineTo(32, 34); c.stroke();
+  } else {
+    c.font = '20px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(glyph, 24, 26);
+  }
+  const out = { cv, url: cv.toDataURL() };
+  _icons.set(key, out);
+  return out;
+}
+const hexCss = (n) => '#' + n.toString(16).padStart(6, '0');
+
 export class UI {
   constructor() {
     this.el = {};
@@ -279,6 +320,18 @@ export class UI {
       ctx.fillStyle = '#e8d6b0'; ctx.strokeStyle = 'rgba(0,0,0,.6)';
       const w = (c.W / R) * (S / 2), h = (c.D / R) * (S / 2);
       ctx.fillRect(mx - w / 2, my - h / 2, w, h); ctx.strokeRect(mx - w / 2, my - h / 2, w, h);
+    }
+    const isz = S * 0.13;
+    for (const p of this.mapPois()) {
+      let [mx, my] = toMini(p.x, p.z);
+      const dx = mx - S / 2, dy = my - S / 2, d = Math.hypot(dx, dy), rim = S / 2 - isz * 0.62;
+      if (d > rim) {
+        if (!p.pin) continue;
+        mx = S / 2 + dx / d * rim; my = S / 2 + dy / d * rim;
+        ctx.globalAlpha = 0.8;
+      }
+      ctx.drawImage(mapIcon(p.kind, p.color).cv, mx - isz / 2, my - isz / 2, isz, isz);
+      ctx.globalAlpha = 1;
     }
     for (const f of G.world.fires) {
       const [mx, my] = toMini(f.x, f.z);
@@ -743,6 +796,7 @@ export class UI {
     if (!this.mapDrawn) { this.drawMap(); this.mapDrawn = true; }
     const ov = $('map-overlay');
     ov.innerHTML = LOCATIONS.map((l, i) => `<div class="map-loc" data-tele="${i}" style="left:${((l.x + HALF) / WORLD_SIZE) * 100}%;top:${((l.z + HALF) / WORLD_SIZE) * 100}%">${l.name}</div>`).join('')
+      + this.mapPoiHtml()
       + '<div class="map-player" id="map-player"></div><div id="map-animals"></div>';
     ov.onclick = (e) => { const b = e.target.closest('[data-tele]'); if (!b) return; if (G.mode === 'survival') { this.toast('No fast travel in survival mode — you have to walk.', 'warn'); return; } this.teleport(LOCATIONS[+b.dataset.tele]); };
   }
@@ -758,6 +812,42 @@ export class UI {
     if (G.sandbox.revealAnimals) {
       ab.innerHTML = G.animals.list.filter((a) => a.state !== S.DOWN).map((a) => `<div class="map-animal" title="${a.sp.name}" style="left:${((a.pos.x + HALF) / WORLD_SIZE) * 100}%;top:${((a.pos.z + HALF) / WORLD_SIZE) * 100}%"></div>`).join('');
     } else ab.innerHTML = '';
+  }
+
+  // Icons for the big map. Stores standing together become one row of icons; a label is
+  // left off where a named place (the fast-travel spots) already says what is there.
+  mapPoiHtml() {
+    const groups = [];
+    for (const p of this.mapPois()) {
+      const g = p.store && groups.find((q) => q.store && Math.hypot(q.x - p.x, q.z - p.z) < 40);
+      if (g) { g.items.push(p); g.x = g.items.reduce((s, i) => s + i.x, 0) / g.items.length; g.z = g.items.reduce((s, i) => s + i.z, 0) / g.items.length; }
+      else groups.push({ x: p.x, z: p.z, store: !!p.store, items: [p] });
+    }
+    return groups.map((g) => {
+      const p = g.items[0];
+      const named = LOCATIONS.some((l) => Math.hypot(l.x - g.x, l.z - g.z) < 16);
+      const label = g.store ? g.items.map((i) => i.label).join(' · ') : p.label;
+      const showLabel = p.house !== undefined ? (p.mine || p.color || !named) : !named;
+      const icons = g.items.map((i) => `<img src="${mapIcon(i.kind, i.color).url}" alt="" title="${i.label}">`).join('');
+      return `<div class="map-poi${p.mine ? ' mine' : ''}${named && showLabel ? ' above' : ''}" style="left:${((g.x + HALF) / WORLD_SIZE) * 100}%;top:${((g.z + HALF) / WORLD_SIZE) * 100}%"><div class="icons">${icons}</div>${showLabel ? `<span${p.color ? ` style="color:${p.color}"` : ''}>${label}</span>` : ''}</div>`;
+    }).join('');
+  }
+
+  // Everything worth an icon, with PvP house owners worked out
+  mapPois() {
+    const net = G.net;
+    return (G.world.pois || []).map((p) => {
+      const q = { ...p, pin: false, mine: false, color: null };
+      if (p.house !== undefined) {
+        if (net && net.hostId !== undefined) {
+          const o = net.ownerOf(p.house);
+          if (o && o.me) Object.assign(q, { kind: 'home', label: 'Your house', pin: true, mine: true });
+          else if (o) Object.assign(q, { kind: 'homestead', label: `${o.name}'s house`, color: hexCss(o.color || 0x888888), pin: true });
+          else Object.assign(q, { kind: 'homestead', label: 'Empty cabin' });
+        } else if (p.kind === 'home') Object.assign(q, { pin: true, mine: true });
+      } else if (p.store) q.pin = true;
+      return q;
+    });
   }
 
   drawMap() {
@@ -1093,10 +1183,10 @@ export class UI {
     $('st-money').textContent = free ? 'Free roam: everything is free' : `Your money: $${S.money}`;
     $('st-items').innerHTML = def.items.map((it) => {
       const owned = it.upgrade ? G.cabin.has(it.id) : it.once && eq.owned[it.id];
-      const needs = it.needs && !eq.owned[it.needs];
+      const needs = it.needs && (it.upgrade ? !G.cabin.has(it.needs) : !eq.owned[it.needs]);
       const price = free ? 0 : priceOf(it, cfg);
       const verb = it.upgrade ? 'Build' : 'Buy';
-      const label = owned ? (it.upgrade ? 'Built' : RARITY_WEAPONS.includes(it.id) ? `Owned · ${RARITY[eq.tier(it.id)].name}` : 'Owned') : needs ? `Needs ${WEAPONS[it.needs].short.toLowerCase()}` : price ? `${verb} $${price}` : (it.upgrade ? 'Build' : 'Take');
+      const label = owned ? (it.upgrade ? 'Built' : RARITY_WEAPONS.includes(it.id) ? `Owned · ${RARITY[eq.tier(it.id)].name}` : 'Owned') : needs ? (it.upgrade ? `Needs ${def.items.find((x) => x.id === it.needs).name.split(' · ')[0].toLowerCase()}` : `Needs ${WEAPONS[it.needs].short.toLowerCase()}`) : price ? `${verb} $${price}` : (it.upgrade ? 'Build' : 'Take');
       const disabled = owned || needs || price > S.money;
       return `<div class="meat-row ${owned ? 'locked' : ''}"><span>${it.name}<br><small>${it.desc || ''}</small></span><span class="acts"><button class="btn small ${disabled ? '' : 'primary'}" data-buy="${it.id}" ${disabled ? 'disabled' : ''}>${label}</button></span></div>`;
     }).join('');
@@ -1149,7 +1239,7 @@ export class UI {
   }
 
   meatPrice(type, cooked) {
-    return Math.round((MEAT_PRICE[type] || 5) * (cooked ? 1.4 : 1) * (G.cfg ? G.cfg.sell : 1));
+    return Math.round((MEAT_PRICE[type] || 5) * (cooked ? 1.4 : 1) * (G.cfg ? G.cfg.sell : 1) * (G.cabin?.has('lodge') ? 1.1 : 1));
   }
 
   buy(id) {
@@ -1157,7 +1247,7 @@ export class UI {
     const price = G.mode === 'survival' ? priceOf(it, G.cfg) : 0;
     if (price > S.money || (it.upgrade ? G.cabin.has(id) : it.once && eq.owned[id])) return;
     if (id === 'cooked' && S.space() < PORTION_KG) { this.toast('Your pack is full.', 'warn'); return; }
-    if (it.needs && !eq.owned[it.needs]) return;
+    if (it.needs && (it.upgrade ? !G.cabin.has(it.needs) : !eq.owned[it.needs])) return;
     S.money -= price;
     if (it.upgrade) {
       G.cabin.build(id);

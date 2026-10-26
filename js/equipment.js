@@ -26,7 +26,7 @@ export const WEAPONS = {
 };
 
 function part(geo, color, x, y, z, rx = 0, ry = 0, rz = 0) { return colorize(xf(geo, x, y, z, rx, ry, rz), color); }
-const glove = 0x3b3a30, sleeve = 0x4a4f3a;
+const glove = 0x4e4636, sleeve = 0x4a4f3a;
 // stock (wood) and metal colours of each first-person weapon, for rarity finishes
 const VM_COLORS = {
   rifle: { wood: [0x5b3a22, 0x4a2e1a], metal: [0x26282b, 0x3a3d41] },
@@ -35,6 +35,53 @@ const VM_COLORS = {
   bow: { wood: [0x6a3e22, 0x4a2a16], metal: [] },
 };
 const POWER_ITEM = { rifle: 'rifle', shot: 'shotgun', pistol: 'pistol', arrow: 'bow' };
+
+// ---------- gloved hands that actually wrap around what they hold ----------
+// c: centre of the bar being held, axis: its direction, palm: which side the palm sits on,
+// r: bar radius, wrap: which way the fingers curl round. Returns { parts, wrist }.
+const _hA = new THREE.Vector3(), _hP = new THREE.Vector3(), _hB = new THREE.Vector3();
+function handAround({ c, axis, palm, r, wrap = 1, spread = 0.0185, trigger = null, thumbSide = 1, curl = 1 }) {
+  const C = c.clone();
+  const A = _hA.copy(axis).normalize().clone();
+  const P = _hP.copy(palm).addScaledVector(A, -palm.dot(A)).normalize().clone();
+  const Bv = _hB.crossVectors(A, P).multiplyScalar(wrap).normalize().clone();
+  const parts = [];
+  const around = (o, th, extra = 0) => C.clone().addScaledVector(A, o).addScaledVector(P, Math.cos(th) * (r + 0.011 + extra)).addScaledVector(Bv, Math.sin(th) * (r + 0.011 + extra));
+  const palmC = C.clone().addScaledVector(P, r + 0.014).addScaledVector(Bv, -0.012);
+  // palm and back of the hand, shaped to sit flat against the grip
+  const pg = new THREE.SphereGeometry(1, 14, 10);
+  pg.applyMatrix4(new THREE.Matrix4().makeBasis(A, Bv, P).multiply(new THREE.Matrix4().makeScale(0.043, 0.036, 0.017)));
+  pg.translate(palmC.x, palmC.y, palmC.z);
+  parts.push(colorize(pg, glove));
+  // four fingers curling round the bar; the index may reach for a trigger instead
+  const lens = [0.92, 1, 0.94, 0.76];
+  for (let k = 0; k < 4; k++) {
+    const o = (k - 1.5) * spread * (k === 3 ? 1.08 : 1);
+    let pts;
+    if (k === 0 && trigger) {
+      const base = around(o, 0.35);
+      pts = [base, base.clone().lerp(trigger, 0.5).addScaledVector(P, 0.006), trigger.clone()];
+    } else {
+      const end = (3.3 + 0.55 * lens[k]) * curl;
+      pts = [];
+      for (let i = 0; i <= 5; i++) pts.push(around(o, 0.35 + (end - 0.35) * (i / 5), i === 0 ? 0.002 : 0));
+    }
+    parts.push(loft(curveRings(pts, (t) => 0.0098 - 0.002 * t, 9), { seg: 8, color: () => glove }));
+    parts.push(colorize(xf(new THREE.SphereGeometry(0.0096, 8, 6), pts[1].x, pts[1].y, pts[1].z), glove)); // knuckle
+  }
+  // thumb wraps the other way, just past the index finger
+  const to = -2.0 * spread * thumbSide;
+  const tp = [];
+  for (let i = 0; i <= 4; i++) tp.push(around(to, -0.2 - 1.25 * (i / 4), 0.002).addScaledVector(A, 0.004 * i * thumbSide));
+  parts.push(loft(curveRings(tp, (t) => 0.0115 - 0.0025 * t, 8), { seg: 8, color: () => glove }));
+  // wrist, behind the palm
+  const wrist = palmC.clone().addScaledVector(Bv, -0.05).addScaledVector(P, 0.012);
+  parts.push(loft(curveRings([palmC.clone().addScaledVector(Bv, -0.02), wrist], [0.03, 0.026], 4), { seg: 10, color: () => glove }));
+  return { parts, wrist };
+}
+// sleeve from the wrist to off-screen, slightly tapered
+function sleeveTo(wrist, elbow, r0 = 0.036, r1 = 0.05) { return cylinderBetween(wrist, elbow, r0, r1, 12, sleeve); }
+const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
 // ---------- weapon models (first person: barrel along -z; `hands = false` gives the bare weapon) ----------
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -105,14 +152,9 @@ function buildRifle() {
 }
 
 function buildTwoHands(frontZ = -0.22) {
-  const p = [];
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0.012, -0.03, 0.13, 0, 0, 0, 0.035, 0.045, 0.06), glove));
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0.03, -0.012, 0.11, 0, 0, 0, 0.012, 0.012, 0.03), glove)); // trigger finger
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 10), 0.05, -0.1, 0.27, -1.1, 0, 0.35), sleeve));
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), -0.005, -0.035, frontZ, 0, 0, 0, 0.04, 0.035, 0.07), glove));
-  p.push(colorize(xf(new THREE.SphereGeometry(1, 8, 6), 0.022, -0.012, frontZ - 0.01, 0, 0, 0, 0.012, 0.02, 0.04), glove)); // fingers wrapped over
-  p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.34, 10), -0.08, -0.12, frontZ + 0.14, -1.25, 0, -0.6), sleeve));
-  return mergeColored(p);
+  const R = handAround({ c: v3(0, -0.06, 0.205), axis: v3(0, -0.088, 0.037), palm: v3(1, 0, 0.2), r: 0.019, wrap: -1, trigger: v3(0.002, -0.034, 0.064) });
+  const L = handAround({ c: v3(0, -0.012, frontZ), axis: v3(0, 0, -1), palm: v3(-0.35, -1, 0), r: 0.022, wrap: -1, curl: 0.92 });
+  return mergeColored([...R.parts, sleeveTo(R.wrist, v3(0.1, -0.2, 0.46)), ...L.parts, sleeveTo(L.wrist, v3(-0.14, -0.22, frontZ + 0.32))]);
 }
 
 function buildShotgun() {
@@ -182,9 +224,9 @@ function buildPistol(hands = true) {
   p.push(part(new THREE.BoxGeometry(0.004, 0.01, 0.006), metal, 0, 0.042, -0.17));
   for (const sx of [-0.0065, 0.0065]) p.push(part(new THREE.BoxGeometry(0.005, 0.012, 0.006), metal, sx, 0.043, 0.035));
   if (hands) {
-    // hand wrapped around the grip, forearm dropping away below the line of sight
-    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0, -0.05, 0.072, -0.3, 0, 0, 0.028, 0.042, 0.03), glove));
-    p.push(colorize(xf(new THREE.CylinderGeometry(0.03, 0.04, 0.26, 10), 0.0, -0.2, 0.13, -0.45, 0, 0), sleeve));
+    // hand wrapped around the grip, index finger on the trigger, forearm dropping away below the sights
+    const H = handAround({ c: v3(0, -0.036, 0.072), axis: v3(0, -0.083, 0.028), palm: v3(0.35, 0, 0.94), r: 0.016, wrap: -1, trigger: v3(0.003, -0.014, 0.026) });
+    p.push(...H.parts, sleeveTo(H.wrist, v3(0.0, -0.24, 0.2), 0.032, 0.042));
   }
   return mergeColored(p);
 }
@@ -207,8 +249,9 @@ function buildBow(hands = true) {
     p.push(part(new THREE.SphereGeometry(0.006, 8, 6), 0x2a1a10, 0, 0.5 * sy, -0.03)); // string nock
   }
   if (hands) {
-    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0, 0, 0.005, 0, 0, 0, 0.04, 0.05, 0.04), glove)); // bow hand
-    p.push(cylinderBetween(new THREE.Vector3(-0.01, -0.03, 0.02), new THREE.Vector3(-0.14, -0.42, 0.55), 0.035, 0.05, 10, sleeve));
+    // bow hand closed round the leather grip
+    const H = handAround({ c: v3(0, 0, 0.004), axis: v3(0, 1, 0), palm: v3(1, 0, 0.15), r: 0.019, wrap: 1 });
+    p.push(...H.parts, sleeveTo(H.wrist, v3(-0.32, -0.55, 0.42)));
   }
   return mergeColored(p);
 }
@@ -236,8 +279,8 @@ function buildBinoculars(hands = true) {
     p.push(part(new THREE.CircleGeometry(0.024, 16), glass, s * 0.034, 0, -0.091, 0, Math.PI));
     p.push(part(new THREE.CircleGeometry(0.006, 8), 0x9ac0e0, s * 0.034 + 0.008, 0.008, -0.0915, 0, Math.PI));
     if (hands) {
-      p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), s * 0.062, -0.01, 0.0, 0, 0, 0, 0.03, 0.045, 0.055), glove));
-      p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.32, 10), s * 0.12, -0.13, 0.12, -0.8, 0, s * 0.5), sleeve));
+      const H = handAround({ c: v3(s * 0.034, 0, 0.005), axis: v3(0, 0, 1), palm: v3(s, -0.45, 0), r: 0.026, wrap: s, curl: 0.55 });
+      p.push(...H.parts, sleeveTo(H.wrist, v3(s * 0.13, -0.21, 0.24)));
     }
   }
   // hinge bridge and ridged focus wheel
@@ -263,8 +306,8 @@ function buildKnife(hands = true) {
   p.push(alongZ([[0.085, 0, 0.012, 0.016], [0.07, 0, 0.0125, 0.017], [0.05, 0, 0.011, 0.014], [0.03, 0, 0.0125, 0.016], [0.01, 0, 0.011, 0.014], [-0.01, 0, 0.0125, 0.016], [-0.034, 0, 0.011, 0.014]], 0x3a2a1c, 12));
   p.push(part(new THREE.SphereGeometry(1, 10, 8).scale(0.013, 0.017, 0.012), 0x8a8a8a, 0, 0, 0.09));
   if (hands) {
-    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0.006, -0.012, 0.03, 0, 0, 0, 0.04, 0.035, 0.065), glove));
-    p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 10), 0.05, -0.07, 0.17, -1.2, 0, 0.3), sleeve));
+    const H = handAround({ c: v3(0, 0, 0.03), axis: v3(0, 0, 1), palm: v3(1, -0.4, 0), r: 0.015, wrap: -1 });
+    p.push(...H.parts, sleeveTo(H.wrist, v3(0.07, -0.13, 0.32)));
   }
   return mergeColored(p);
 }
@@ -276,8 +319,8 @@ function buildBaitBag(hands = true) {
   p.push(part(new THREE.TorusGeometry(0.032, 0.004, 6, 12), 0x6a5030, 0, 0.098, 0, Math.PI / 2, 0, 0)); // drawstring
   for (let i = 0; i < 6; i++) p.push(ellipsoid(Math.cos(i) * 0.03, 0.105, Math.sin(i) * 0.02, 0.008, 0.008, 0.008, 0xf0c030, 5, 4));
   if (hands) {
-    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0.02, -0.03, 0.04, 0, 0, 0, 0.04, 0.045, 0.05), glove));
-    p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 10), 0.06, -0.09, 0.18, -1.2, 0, 0.3), sleeve));
+    const H = handAround({ c: v3(0, -0.03, 0.0), axis: v3(1, 0, 0), palm: v3(0, -1, 0.3), r: 0.05, wrap: 1, curl: 0.6 });
+    p.push(...H.parts, sleeveTo(H.wrist, v3(0.07, -0.2, 0.26)));
   }
   return mergeColored(p);
 }
@@ -289,8 +332,8 @@ function buildCall(hands = true) {
   p.push(cylZ(0.01, 0.01, 0.06, 0.17, -0.005, 0x2a2a2a, 8));
   p.push(part(new THREE.TorusGeometry(0.008, 0.002, 4, 10), 0xc8a050, 0, 0.016, 0.02, 0, Math.PI / 2, 0)); // lanyard ring
   if (hands) {
-    p.push(colorize(xf(new THREE.SphereGeometry(1, 10, 8), 0.0, -0.02, 0.0, 0, 0, 0, 0.04, 0.04, 0.05), glove));
-    p.push(colorize(xf(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 10), 0.05, -0.08, 0.15, -1.2, 0, 0.3), sleeve));
+    const H = handAround({ c: v3(0, 0, 0.0), axis: v3(0, 0, 1), palm: v3(0.6, -0.8, 0), r: 0.017, wrap: -1 });
+    p.push(...H.parts, sleeveTo(H.wrist, v3(0.06, -0.13, 0.28)));
   }
   return mergeColored(p);
 }
@@ -384,7 +427,8 @@ export class Equipment {
     this.strBot = new THREE.Mesh(new THREE.CylinderGeometry(0.0015, 0.0015, 1, 4), strMat);
     this.bowString.add(this.strTop, this.strBot);
     this.nocked = new THREE.Mesh(buildArrow(), mat);
-    this.drawHand = new THREE.Mesh(colorize(new THREE.SphereGeometry(0.035, 8, 6), glove), mat);
+    // fist with the fingers hooked round the string, wrist back towards you
+    this.drawHand = new THREE.Mesh(mergeColored(handAround({ c: v3(0, 0, 0), axis: v3(0, 1, 0), palm: v3(-1, 0, 0), r: 0.004, wrap: -1, curl: 0.85 }).parts), mat);
     this.bowModel = new THREE.Mesh(buildBow(), mat);
     this.models.bow = group(this.bowModel, this.bowString, this.nocked, this.drawHand);
     this.models.bow.scale.setScalar(0.55);
@@ -585,9 +629,9 @@ export class Equipment {
     const P = G.player, env = G.env;
     const t = performance.now() / 1000;
     const li = 0.12 + env.daylight * 0.9 * env.w.light;
-    this.vmHemi.intensity = 0.35 + li * 1.6;
+    this.vmHemi.intensity = 0.12 + li * 1.8;
     this.vmSun.intensity = li * 2.4;
-    this.vmFill.intensity = 0.25 + li * 0.9;
+    this.vmFill.intensity = 0.06 + li * 1.0;
     this.vmHemi.color.copy(env.hemi.color);
     const bob = P.bobAmt;
     const bx = Math.cos(P.bobT) * 0.012 * bob, by = Math.abs(Math.sin(P.bobT)) * 0.012 * bob;
@@ -674,6 +718,32 @@ export class Equipment {
         m.rotation.set(-0.2, 0.3, -0.1);
       }
     }
+    this.weaponFeel(m, dt, a, t);
+  }
+
+  // What the weapon does on top of its pose: it lags behind quick turns and springs back,
+  // tilts into strafes, dips when you land, breathes, and recoil kicks up and to one side.
+  weaponFeel(m, dt, a, t) {
+    const P = G.player;
+    if (!this.feel) this.feel = { yaw: P.yaw, pitch: P.pitch, x: 0, y: 0, vx: 0, vy: 0, tilt: 0 };
+    const f = this.feel, idt = 1 / Math.max(dt, 1 / 240);
+    let dYaw = P.yaw - f.yaw; dYaw = Math.atan2(Math.sin(dYaw), Math.cos(dYaw));
+    const dPitch = P.pitch - f.pitch;
+    f.yaw = P.yaw; f.pitch = P.pitch;
+    const k = 1 - a * 0.8;
+    const tx = clamp(-dYaw * idt * 0.0045, -0.045, 0.045), ty = clamp(dPitch * idt * 0.0045, -0.035, 0.035);
+    f.vx += ((tx - f.x) * 140 - f.vx * 15) * dt; f.x += f.vx * dt;
+    f.vy += ((ty - f.y) * 140 - f.vy * 15) * dt; f.y += f.vy * dt;
+    const side = P.vel.x * Math.cos(P.yaw) - P.vel.z * Math.sin(P.yaw);
+    f.tilt = damp(f.tilt, clamp(-side * 0.03, -0.12, 0.12), 6, dt);
+    const breathe = Math.sin(t * 1.25) * (1 - a);
+    m.position.x += (f.x + Math.sin(t * 0.62) * 0.0018 * (1 - a)) * k;
+    m.position.y += f.y * k + (P.dip || 0) * 0.35 + breathe * 0.0025;
+    m.rotation.x += f.y * 1.6 * k + breathe * 0.006 + (P.dip || 0) * 0.4;
+    m.rotation.y += f.x * 2.4 * k;
+    m.rotation.z += (f.tilt + f.x * 1.4) * k;
+    // recoil throws the muzzle up and to a random side
+    if (this.kick > 0.001) { m.rotation.y += this.kick * (this.kickSide || 0) * 0.12; m.rotation.z += this.kick * (this.kickSide || 0) * 0.18; }
   }
 
   // ---------- firearms ----------
@@ -710,6 +780,7 @@ export class Equipment {
     this.flashT = 0.05;
     const aimed = this.aim > 0.8;
     this.kick = 1;
+    this.kickSide = Math.random() * 2 - 1;
     const rk = this.item === 'shotgun' ? 1.5 : this.item === 'pistol' ? 0.8 : 1;
     P.recoil += (aimed ? 0.05 : 0.075) * rk;
     P.pitch += (aimed ? 0.006 : 0.012) * rk;

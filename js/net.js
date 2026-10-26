@@ -146,7 +146,9 @@ export class Net {
       case 'welcome':
         this.connected = true;
         this.id = m.id;
+        this.hostId = m.host;
         this.isHost = m.host === m.id;
+        { const c = this.myHouse(); if (c) G.player.teleport(c.x + c.dx, c.z + c.D / 2 + 2.2); }
         for (const p of m.players) if (p.id !== this.id) this.players.set(p.id, new RemotePlayer(p.id, p.name));
         if (!this.isHost) { A.clearAll(); A.byNid.clear(); }
         this.sendLook();
@@ -351,8 +353,29 @@ export class Net {
     }
   }
 
-  // Back into the forest after dying: fresh pack, knife only, far from other players
+  // Houses: the host lives in the starting cabin, everyone else gets a homestead
+  houseOf(id) {
+    const H = G.world.houses;
+    if (!H || !H.length) return -1;
+    return id === this.hostId ? 0 : 1 + (id % (H.length - 1));
+  }
+  myHouse() { const i = this.houseOf(this.id); return i >= 0 ? G.world.houses[i] : null; }
+  // who lives in house i: { id, name, me } or null
+  ownerOf(i) {
+    if (this.houseOf(this.id) === i) return { id: this.id, name: this.name, me: true };
+    for (const p of this.players.values()) if (this.houseOf(p.id) === i) return { id: p.id, name: p.name, me: false, color: lookColor('jacket', p.look.jacket) };
+    return null;
+  }
+
+  // Back into the forest after dying: fresh pack, knife only — at home if nobody is waiting
+  // there, otherwise far from the other players
   respawnPoint() {
+    const c = this.myHouse();
+    if (c) {
+      let md = 999;
+      for (const p of this.players.values()) if (!p.dead && p.seen) md = Math.min(md, Math.hypot(p.pos.x - c.x, p.pos.z - c.z));
+      if (md > 50) return [c.x + c.dx, c.z + c.D / 2 + 2.2];
+    }
     let best = SPAWNS[0], bs = -1;
     for (const s of SPAWNS) {
       let md = 999;

@@ -127,9 +127,10 @@ export class Survival {
   // Called after sleeping
   slept(hours) {
     const feather = G.cabin?.has('bed');
-    this.rest = Math.min(100, this.rest + hours * 13 * (feather ? 1.35 : 1));
+    const reno = G.cabin?.has('renovate');
+    this.rest = Math.min(100, this.rest + hours * 13 * (feather ? 1.35 : 1) * (reno ? 1.2 : 1));
     this.food = Math.max(0, this.food - hours * 2.2 * this.cfg.drain);
-    if (this.food > 25) this.health = Math.min(100, this.health + hours * (feather ? 6 : 3));
+    if (this.food > 25) this.health = Math.min(100, this.health + hours * ((feather ? 6 : 3) + (reno ? 1.5 : 0)));
     for (let i = 0; i < Math.ceil(hours * 4); i++) this.tickPoison(0.25);
   }
 

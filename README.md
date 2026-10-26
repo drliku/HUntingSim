@@ -41,7 +41,7 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers â€
 | --- | --- |
 | W A S D / Mouse | Move / look |
 | Shift | Sprint (hold breath while scoped, which steadies the aim) |
-| C (or Left Ctrl) | Toggle crouch (quieter, harder to see) |
+| C (or Left Ctrl) | Toggle crouch (quieter, harder to see). Careful: Ctrl+W closes the browser tab; the game asks before leaving |
 | Space | Jump |
 | 1â€“8 | Rifle, shotgun, revolver, bow, knife, binoculars, bait, grunt call |
 | Right mouse | Aim the scope or raise the binoculars |

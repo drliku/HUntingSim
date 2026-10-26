@@ -36,6 +36,21 @@ async function boot() {
   loadProgress();
   const q = QUALITY[settings.quality] || QUALITY.medium;
   const canvas = document.getElementById('game');
+  // the graphics driver can reset the WebGL context (driver update, GPU out of memory, sleep);
+  // keep the context restorable and reload into the same game mode once it is back
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    G.ui?.toast('The graphics driver reset. Restarting the game...', 'warn');
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    try { if (G.started && !G.net) sessionStorage.setItem('whs.pending', JSON.stringify({ mode: G.mode, diff: G.difficulty })); } catch { /* ignore */ }
+    G.leaving = true;
+    location.reload();
+  });
+  // closing the tab by accident (Ctrl+W, Ctrl+Q...) asks first while a game is running
+  window.addEventListener('beforeunload', (e) => {
+    if (G.started && !G.leaving) { e.preventDefault(); e.returnValue = ''; }
+  });
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: q.antialias, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.pixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -221,6 +236,7 @@ async function boot() {
   G.restartGame = () => {
     try { localStorage.removeItem('whs.progress'); } catch { /* storage unavailable */ }
     G.journal = []; G.discovered.clear();
+    G.leaving = true;
     location.reload();
   };
   try {
@@ -426,8 +442,19 @@ async function boot() {
     };
   } catch { /* workers unavailable: hidden tabs pause */ }
 
+  // A thrown error must not wedge the game: keys would stay "pressed" and the frame would
+  // keep failing at the same spot. Log it once, clear the frame's input and carry on.
+  let frameErrors = 0;
   function frame() {
     requestAnimationFrame(frame);
+    try { frameBody(); } catch (err) {
+      frameErrors++;
+      if (frameErrors <= 3) console.error('Frame error (the game keeps running):', err);
+      if (frameErrors === 1) ui.toast('Something went wrong for a moment; the game recovered. If it keeps happening, try a lower graphics setting.', 'warn');
+      try { input.endFrame(); } catch { /* ignore */ }
+    }
+  }
+  function frameBody() {
     lastFrameAt = performance.now();
     const dt = Math.min(clock.getDelta(), 0.05);
     if (G.sleep) {
@@ -454,7 +481,7 @@ async function boot() {
     const playing = G.started && !G.inMainMenu && !G.menuOpen && input.locked;
     if (playing) {
       G.gameTime += dt;
-      player.update(dt, input, equipment.aim > 0.5);
+      player.update(dt, input, equipment.aim > 0.5, input.right && !!equipment.W.zoom);
       if (!player.inBed) equipment.update(dt, input);
       else if (input.wasPressed('KeyZ') && player.inBed.spot.bed) ui.showSleep(player.inBed.spot);
       if (input.wasPressed('KeyT')) { tracks.setMode(!tracks.mode); ui.toast(tracks.mode ? 'Tracking mode on — fresh sign is easier to spot' : 'Tracking mode off', 'info'); }

@@ -26,6 +26,9 @@ export class Input {
     window.addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
       if (['Space', 'Tab', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+      // Ctrl/Cmd + a game key would trigger browser shortcuts (save page, bookmark, find...);
+      // block the ones the browser lets us block (Ctrl+W/T/N can't be, hence the leave prompt)
+      if ((e.ctrlKey || e.metaKey) && /^(Key[A-Z]|Digit\d)$/.test(e.code) && !['KeyC', 'KeyV', 'KeyX'].includes(e.code)) e.preventDefault();
       // In free-cursor mode the browser does not exit on Esc, so pause here
       if (e.code === 'Escape' && this.fallback && this.locked) { this.locked = false; if (this.onLockChange) this.onLockChange(false); return; }
       if (!this.keys.has(e.code)) this.pressed.add(e.code);
@@ -38,8 +41,9 @@ export class Input {
       this.dx += e.movementX || 0;
       this.dy += e.movementY || 0;
     });
-    canvas.addEventListener('mousedown', (e) => {
+    document.addEventListener('mousedown', (e) => {
       if (!this.locked) return;
+      if (!document.pointerLockElement && e.target !== canvas && e.target.closest && e.target.closest('button, a, input, select, .menu, .panel')) return;
       if (e.button === 0) { this.left = true; this.leftPressed = true; }
       if (e.button === 2) this.right = true;
     });
@@ -135,7 +139,7 @@ export class Player {
     this.vel.set(0, 0, 0);
   }
 
-  update(dt, input, ads) {
+  update(dt, input, ads, wantAim = false) {
     // Mouse look (sensitivity reduced when zoomed)
     const sens = 0.0022 * settings.sensitivity * this.zoomSensitivity;
     this.yaw -= input.dx * sens;
@@ -165,7 +169,7 @@ export class Player {
     const onPlatform = this.world.groundAt(this.pos.x, this.pos.z, this.pos.y) > h + 0.05;
     if (!onPlatform && -h > SWIM_DEPTH) this.swimming = true;
     else if (-h < SWIM_DEPTH - 0.15 || onPlatform) this.swimming = false;
-    this.sprinting = !ads && !this.swimming && wantSprint && len > 0 && fz > 0 && this.stamina > 0.05 && this.onGround;
+    this.sprinting = !ads && !wantAim && !this.swimming && wantSprint && len > 0 && fz > 0 && this.stamina > 0.05 && this.onGround;
     if ((this.sprinting || this.swimming) && this.crouch) this.crouch = false;
     if (this.crouch && h < -0.6) this.crouch = false; // keep head above water
 

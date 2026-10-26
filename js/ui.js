@@ -592,7 +592,7 @@ export class UI {
     $('btn-survival').addEventListener('click', () => $('mm-diff').classList.toggle('hidden'));
     this.bindPvp();
     document.querySelectorAll('[data-diff]').forEach((b) => b.addEventListener('click', () => G.newGame('survival', b.dataset.diff)));
-    $('dt-restart').addEventListener('click', () => { if (this.pvpOver) location.href = location.pathname; else if (G.net) G.pvpRespawn(); else G.restartGame(); });
+    $('dt-restart').addEventListener('click', () => { if (this.pvpOver) { G.leaving = true; location.href = location.pathname; } else if (G.net) G.pvpRespawn(); else G.restartGame(); });
     $('st-items').addEventListener('click', (e) => { const b = e.target.closest('[data-buy]'); if (b) this.buy(b.dataset.buy); const u = e.target.closest('[data-upgrade]'); if (u) this.upgradeWeapon(u.dataset.upgrade); });
     $('st-sell').addEventListener('click', (e) => { const b = e.target.closest('[data-sell]'); if (b) this.sellMeat(b.dataset.sell, b.dataset.cooked === '1', b.dataset.all === '1'); });
   }
@@ -1465,7 +1465,7 @@ export class UI {
     };
     const nameOf = () => { const n = $('pvp-name').value.trim().slice(0, 16) || 'Hunter'; try { localStorage.setItem('whs.pvpname', n); } catch { /* ignore */ } return n; };
     try { $('pvp-name').value = localStorage.getItem('whs.pvpname') || ''; } catch { /* ignore */ }
-    const go = (pvp) => { try { sessionStorage.setItem('whs.pending', JSON.stringify({ pvp })); } catch { /* ignore */ } location.reload(); };
+    const go = (pvp) => { try { sessionStorage.setItem('whs.pending', JSON.stringify({ pvp })); } catch { /* ignore */ } G.leaving = true; location.reload(); };
     $('btn-pvp').addEventListener('click', async () => {
       $('mm-pvp').classList.toggle('hidden');
       if ($('mm-pvp').classList.contains('hidden')) return;

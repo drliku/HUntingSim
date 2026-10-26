@@ -566,6 +566,7 @@ export class Equipment {
       if (this.switchT < 0) this.switchT = 0;
     }
     const W = this.W;
+    if (input.right && W.perShell && this.reloadT > 0 && this.ammo[this.item].mag > 0) this.reloadT = 0;
     const canAim = !!W.zoom && !P.sprinting && !P.swimming && this.switchT === 0 && this.reloadT === 0;
     const wantAim = input.right && canAim;
     this.aim = damp(this.aim, wantAim ? 1 : 0, wantAim ? 7 : 9, dt);

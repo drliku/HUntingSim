@@ -1,15 +1,16 @@
 // Sky dome, sun/moon lighting, day-night cycle, weather, precipitation, clouds, wind and water.
 import * as THREE from 'three';
+import { makeCloudNoise, CLOUD_GLSL } from './clouds.js';
 import { clamp, lerp, smoothstep, damp, mulberry32 } from './utils.js';
 import { WORLD_SIZE, WATER_LEVEL } from './terrain.js';
 
 export const WEATHER = {
-  clear:  { label: 'Clear',    fog: 1.0,  cloud: 0.15, rain: 0, snow: 0, light: 1.0,  wind: 2.5, gray: 0.0 },
-  cloudy: { label: 'Overcast', fog: 0.8,  cloud: 0.85, rain: 0, snow: 0, light: 0.65, wind: 4.5, gray: 0.6 },
-  fog:    { label: 'Fog',      fog: 0.28, cloud: 0.6,  rain: 0, snow: 0, light: 0.6,  wind: 1.0, gray: 0.75 },
-  rain:   { label: 'Rain',     fog: 0.55, cloud: 1.0,  rain: 1, snow: 0, light: 0.45, wind: 6.0, gray: 0.8 },
-  storm:  { label: 'Storm',    fog: 0.42, cloud: 1.0,  rain: 1.6, snow: 0, light: 0.3, wind: 11, gray: 0.9 },
-  snow:   { label: 'Snow',     fog: 0.45, cloud: 0.95, rain: 0, snow: 1, light: 0.7,  wind: 3.0, gray: 0.7 },
+  clear:  { label: 'Clear',    fog: 1.0,  cloud: 0.15, rain: 0, snow: 0, light: 1.0,  wind: 2.5, gray: 0.0, temp: 12, swing: 7 },
+  cloudy: { label: 'Overcast', fog: 0.8,  cloud: 0.85, rain: 0, snow: 0, light: 0.65, wind: 4.5, gray: 0.6, temp: 9, swing: 3.5 },
+  fog:    { label: 'Fog',      fog: 0.28, cloud: 0.6,  rain: 0, snow: 0, light: 0.6,  wind: 1.0, gray: 0.75, temp: 6, swing: 3 },
+  rain:   { label: 'Rain',     fog: 0.55, cloud: 1.0,  rain: 1, snow: 0, light: 0.45, wind: 6.0, gray: 0.8, temp: 8, swing: 2.5 },
+  storm:  { label: 'Storm',    fog: 0.42, cloud: 1.0,  rain: 1.6, snow: 0, light: 0.3, wind: 11, gray: 0.9, temp: 7, swing: 2.5 },
+  snow:   { label: 'Snow',     fog: 0.45, cloud: 0.95, rain: 0, snow: 1, light: 0.7,  wind: 3.0, gray: 0.7, temp: -5, swing: 3 },
 };
 
 const SKY_VS = `
@@ -20,10 +21,10 @@ void main(){
   gl_Position = projectionMatrix * p;
   gl_Position.z = gl_Position.w; // keep at far plane
 }`;
-const SKY_FS = `
+const SKY_FS = () => `
 uniform vec3 uTop; uniform vec3 uHorizon; uniform vec3 uGround;
 uniform vec3 uSunDir; uniform vec3 uSunColor; uniform float uSunSize;
-uniform vec3 uMoonDir; uniform float uMoon;
+uniform vec3 uMoonDir; uniform float uMoon; uniform float uStars, uStarRot;
 uniform float uCloud; uniform vec2 uCloudOff; uniform vec3 uCloudCol; uniform vec3 uCloudShade;
 varying vec3 vDir;
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -43,6 +44,7 @@ float fbm3(vec2 p){
   for (int i = 0; i < 3; i++) { s += a * vnoise(p); p = p * 2.03 + 1.7; a *= 0.5; }
   return s * 1.14;
 }
+${CLOUD_GLSL}
 void main(){
   vec3 d = normalize(vDir);
   float h = d.y;
@@ -62,6 +64,12 @@ void main(){
     float ci = fbm3(cu * vec2(0.7, 3.2) + 11.0);
     float cirrus = smoothstep(0.55, 0.85, ci) * smoothstep(0.02, 0.3, h) * (0.35 + uCloud * 0.3);
     col = mix(col, mix(uCloudCol, uSunColor, 0.25 + pow(sd, 4.0) * 0.5), cirrus * 0.5);
+    if (uVolSteps >= 1.0) {
+      // ray-marched volumetric cumulus
+      vec4 vc = marchClouds(d);
+      col = col * vc.a + vc.rgb;
+      cover = 1.0 - vc.a;
+    } else {
     // cumulus: denser clouds, brighter on the side facing the sun, with a silver lining near it
     vec2 uv = d.xz / (h + 0.12) * 1.3 + uCloudOff;
     float n = fbm(uv);
@@ -78,8 +86,22 @@ void main(){
     float rim = smoothstep(t + 0.14, t - 0.04, n) * cover;
     cc += uSunColor * (pow(sd, 8.0) * 0.35 + rim * pow(sd, 3.0) * 1.4 + lit * 0.08);
     col = mix(col, cc, cover * 0.95);
+    }
   }
-  col += (sun + moon) * (1.0 - cover);
+  // stars, drawn here so that clouds hide them
+  vec3 stars = vec3(0.0);
+  if (uStars > 0.001 && h > -0.02) {
+    float ca = cos(uStarRot), sa = sin(uStarRot);
+    vec3 sp = vec3(ca * d.x + sa * d.z, d.y, -sa * d.x + ca * d.z) * 260.0;
+    vec3 cell = floor(sp);
+    float hs = fract(sin(dot(cell, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+    if (hs > 0.994) {
+      vec3 jt = vec3(fract(hs * 13.1), fract(hs * 71.7), fract(hs * 39.3)) * 0.5 + 0.25;
+      float b = smoothstep(0.36, 0.0, length(fract(sp) - jt)) * (0.35 + 0.65 * fract(hs * 97.0));
+      stars = mix(vec3(1.0, 0.85, 0.7), vec3(0.8, 0.88, 1.0), fract(hs * 53.0)) * b * uStars * 3.2 * smoothstep(-0.02, 0.2, h);
+    }
+  }
+  col += (sun + moon + stars) * (1.0 - cover);
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -146,7 +168,7 @@ void main() {
 const WATER_FS = `
 uniform float uTime, uHalf, uDaylight;
 uniform sampler2D uDepth, tRefl;
-uniform float uRefl;
+uniform float uRefl, uIce;
 varying vec4 vRefl;
 uniform vec3 uDeep, uShallow, uSkyTop, uSkyHorizon, uSunDir, uSunColor;
 varying vec3 vWPos;
@@ -184,6 +206,26 @@ void main() {
   float alpha = mix(0.4, 0.9, smoothstep(0.0, 1.3, depth));
   alpha = max(max(alpha, fres * 0.92), foam * 0.7);
   if (uRefl > 0.5) alpha = max(alpha, 0.55 + fres * 0.4);
+  // ice: forms in the shallows first and spreads out over the deep water
+  if (uIce > 0.0) {
+    float frost = vn(p * 1.3) * 0.55 + vn(p * 4.7) * 0.3 + vn(p * 13.0) * 0.15;
+    float mask = smoothstep(0.0, 0.3, uIce * 5.6 - depth - frost * 0.8);
+    // clear dark ice over deep water, milky ice in the shallows, frost and wind-blown snow on top
+    vec3 ice = mix(vec3(0.5, 0.64, 0.72), vec3(0.14, 0.25, 0.33), smoothstep(0.2, 2.2, depth));
+    ice = mix(ice, vec3(0.88, 0.92, 0.95), smoothstep(0.58, 0.84, frost) * 0.85);
+    // cracks
+    float c1 = smoothstep(0.012, 0.0, abs(vn(p * 0.45 + 3.0) - 0.5)), c2 = smoothstep(0.008, 0.0, abs(vn(p * 1.6 + 9.0) - 0.5)) * step(0.5, vn(p * 0.3));
+    ice = mix(ice, vec3(0.93, 0.96, 1.0), c1 * 0.55 + c2 * 0.3);
+    vec3 Ri = reflect(-V, normalize(vec3((vn(p * 5.0) - 0.5) * 0.04, 1.0, (vn(p * 5.0 + 4.0) - 0.5) * 0.04)));
+    float fi = mix(0.03, 1.0, pow(1.0 - max(V.y, 0.0), 5.0));
+    vec3 skyI = mix(uSkyHorizon, uSkyTop, clamp(Ri.y * 1.6, 0.0, 1.0));
+    vec3 ic = ice * (0.22 + 0.78 * uDaylight) * (0.55 + 0.45 * max(uSunDir.y, 0.0) * 1.6);
+    ic = mix(ic, skyI, fi * 0.4);
+    float si = max(dot(Ri, normalize(uSunDir)), 0.0);
+    ic += uSunColor * (pow(si, 90.0) * 1.6 + pow(si, 12.0) * 0.08) * step(0.0, uSunDir.y) * (1.0 - smoothstep(0.58, 0.84, frost) * 0.7);
+    col = mix(col, ic, mask);
+    alpha = mix(alpha, 0.97, mask);
+  }
   gl_FragColor = vec4(col, alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -228,16 +270,18 @@ export class Environment {
     this.skyUniforms = {
       uTop: { value: new THREE.Color() }, uHorizon: { value: new THREE.Color() }, uGround: { value: new THREE.Color() },
       uSunDir: { value: new THREE.Vector3() }, uSunColor: { value: new THREE.Color() }, uSunSize: { value: 1 },
-      uMoonDir: { value: new THREE.Vector3() }, uMoon: { value: 0 },
+      uMoonDir: { value: new THREE.Vector3() }, uMoon: { value: 0 }, uStars: { value: 0 }, uStarRot: { value: 0 },
       uCloud: { value: 0.2 }, uCloudOff: { value: new THREE.Vector2() }, uCloudCol: { value: new THREE.Color(1, 1, 1) }, uCloudShade: { value: new THREE.Color(0.6, 0.6, 0.6) },
+      tCloudNoise: { value: makeCloudNoise() }, uVolSteps: { value: 0 },
     };
+    this.setCloudQuality(quality);
     const skyMat = new THREE.ShaderMaterial({
-      vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms: this.skyUniforms,
+      vertexShader: SKY_VS, fragmentShader: SKY_FS(), uniforms: this.skyUniforms,
       side: THREE.BackSide, depthWrite: false, fog: false,
     });
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(380, 32, 16), skyMat);
     this.sky.frustumCulled = false;
-    this.sky.renderOrder = -10;
+    this.sky.renderOrder = 10;
     scene.add(this.sky);
 
     // Stars
@@ -256,6 +300,7 @@ export class Environment {
     this.stars.frustumCulled = false;
     this.stars.renderOrder = -9;
     scene.add(this.stars);
+    this.stars.visible = false; // the sky shader draws the stars now (behind the clouds)
 
     // Fog
     this.fogColor = new THREE.Color();
@@ -408,8 +453,9 @@ export class Environment {
     const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       uTime: this.waterUniforms.uTime, uDepth: { value: tex }, uHalf: { value: WORLD_SIZE / 2 },
       uDeep: { value: new THREE.Color(0x1d3a44) }, uShallow: { value: new THREE.Color(0x4a7a6a) }, uDaylight: { value: 1 },
-      tRefl: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uRefl: { value: 0 },
+      tRefl: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uRefl: { value: 0 }, uIce: { value: 0 },
     }]);
+    this.waterUniforms.uIce = uniforms.uIce;
     // share the sky's live colours and sun direction
     uniforms.uSkyTop = U.uTop; uniforms.uSkyHorizon = U.uHorizon; uniforms.uSunDir = U.uSunDir; uniforms.uSunColor = U.uSunColor;
     uniforms.uTime = this.waterUniforms.uTime;
@@ -426,7 +472,7 @@ export class Environment {
     if (!WEATHER[name]) return;
     this.weatherName = name;
     this.target = WEATHER[name];
-    if (instant) this.w = { ...this.target };
+    if (instant) { this.w = { ...this.target }; this.iceSnap = true; }
   }
 
   setViewDistance(d) { this.viewDist = d; }
@@ -451,6 +497,14 @@ export class Environment {
     for (const key of ['fog', 'cloud', 'rain', 'snow', 'light', 'wind', 'gray']) {
       this.w[key] = lerp(this.w[key], this.target[key], dt === 0 ? 1 : k);
     }
+    // Temperature drifts towards the weather's, warmest mid-afternoon and coldest before dawn.
+    // At 0 °C and below the river and lake freeze over (from the shallows out), and thaw again above it.
+    for (const key of ['temp', 'swing']) this.w[key] = lerp(this.w[key] ?? this.target[key], this.target[key], dt === 0 ? 1 : k * 0.4);
+    this.tempC = this.w.temp + this.w.swing * Math.cos((this.time - 15) / 24 * Math.PI * 2);
+    const freezing = this.tempC <= 0;
+    if (this.iceSnap || dt === 0) { this.ice = freezing ? 1 : 0; this.iceSnap = false; }
+    else this.ice = clamp((this.ice || 0) + (freezing ? dt / 25 : -dt / 40), 0, 1);
+    this.frozen = this.ice >= 0.95;
 
     // Wind slowly wanders
     if (Math.random() < dt * 0.02) this.windTarget += (Math.random() - 0.5) * 1.6;
@@ -510,6 +564,8 @@ export class Environment {
     this.stars.position.copy(camPos);
     this.stars.rotation.y = this.time * 0.05;
     this.starMat.opacity = clamp(1 - this.daylight * 1.6, 0, 1) * (1 - g) * 0.95;
+    this.skyUniforms.uStars.value = this.starMat.opacity;
+    this.skyUniforms.uStarRot.value = this.time * 0.05;
 
     // Lights: sun by day, cool moonlight by night
     const night = 1 - this.daylight;
@@ -578,7 +634,13 @@ export class Environment {
 
     this.waterUniforms.uTime.value = tnow;
     this.waterUniforms.uDaylight.value = this.daylight;
+    if (this.waterUniforms.uIce) this.waterUniforms.uIce.value = this.ice || 0;
     if (this.water.material.color) this.water.material.color.setRGB(0.04, 0.1, 0.12).multiplyScalar(0.4 + this.daylight * 0.6).lerp(this.fogColor, 0.12);
+  }
+
+  // ray-marched clouds on Medium and High, the cheap flat layer on Low
+  setCloudQuality(q) {
+    this.skyUniforms.uVolSteps.value = !q.post ? 0 : q.msaa >= 4 ? 34 : 22;
   }
 
   // How well things can be seen (0..1) — used by animal and player perception.

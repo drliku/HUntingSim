@@ -217,7 +217,11 @@ export class UI {
     // status
     this.el['hud-time'].textContent = formatClock(env.time);
     this.el['hud-day'].textContent = `Day ${env.day}`;
-    this.el['hud-weather'].textContent = WEATHER[env.weatherName].label + (env.daylight < 0.2 ? ' · Night' : env.daylight < 0.7 && env.time < 12 ? ' · Dawn' : env.daylight < 0.7 ? ' · Dusk' : '');
+    this.el['hud-weather'].textContent = WEATHER[env.weatherName].label + (env.daylight < 0.2 ? ' · Night' : env.daylight < 0.7 && env.time < 12 ? ' · Dawn' : env.daylight < 0.7 ? ' · Dusk' : '') + ` · ${Math.round(env.tempC ?? 10)}°C`;
+    if (env.frozen !== this.wasFrozen) {
+      if (this.wasFrozen !== undefined) this.toast(env.frozen ? 'The water has frozen over. You can walk on the ice.' : 'The ice is thawing. The water is open again.');
+      this.wasFrozen = env.frozen;
+    }
     const ws = Math.hypot(env.wind.x, env.wind.z);
     const windTo = (Math.atan2(env.wind.x, -env.wind.z) * 180 / Math.PI + 360) % 360;
     this.el['wind-arrow'].style.transform = `rotate(${windTo - bearing}deg)`;

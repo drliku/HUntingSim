@@ -160,6 +160,7 @@ async function boot() {
     world.veg.hiDist = !qq.shadows ? -1e9 : qq.grass >= 1 ? 30 : 12;
     post.setQuality(qq);
     world.env.setViewDistance(qq.viewDist);
+    world.env.setCloudQuality(qq);
     scene.traverse((o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; }); });
     renderOnce = true;
   };

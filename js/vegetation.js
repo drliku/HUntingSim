@@ -219,12 +219,12 @@ function cylinderBetweenG(a, b, r1, r2, seg) {
 }
 
 function makeGrassTuft(rng) {
-  // nine curved blades, each a quad and a tip, dark at the root and pale at the tip
+  // fourteen curved blades, each a quad and a tip, dark at the root and pale at the tip
   const pos = [], col = [];
   const base = new THREE.Color(0x2e4a18), mid = new THREE.Color(0x58782c), tip = new THREE.Color(0x9cae54);
   const push = (p, c) => { pos.push(p[0], p[1], p[2]); col.push(c.r, c.g, c.b); };
-  for (let i = 0; i < 9; i++) {
-    const a = rng() * Math.PI * 2, r = rng() * 0.2;
+  for (let i = 0; i < 14; i++) {
+    const a = rng() * Math.PI * 2, r = rng() * 0.24;
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     const h = 0.3 + rng() * 0.45, w = 0.03 + rng() * 0.015;
     const ba = rng() * Math.PI;
@@ -327,9 +327,21 @@ function makeFlower() {
   return mergeColored(parts);
 }
 
+// Leaves and grass blades let sunlight through: lit from behind they glow a warm yellow-green.
+// Each light's (shadowed) colour is gathered in the lighting loop and added back where you look
+// towards that light through the blade.
+function addTranslucency(shader, k) {
+  const lights = THREE.ShaderChunk.lights_fragment_begin.replace(/RE_Direct\(([^;]*)\);/g, '$&\n\t\ttransAcc += directLight.color * pow(max(dot(-geometryViewDir, directLight.direction), 0.0), 4.0);');
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <lights_fragment_begin>', 'vec3 transAcc = vec3(0.0);\n' + lights)
+    .replace('#include <opaque_fragment>', `outgoingLight += transAcc * diffuseColor.rgb * ${k.toFixed(3)};\n#include <opaque_fragment>`);
+}
+
 function addSway(material, strength, uniforms) {
+  material.customProgramCacheKey = function () { return THREE.MeshLambertMaterial.prototype.customProgramCacheKey.call(this) + '|sw' + strength + '|tr' + (this.userData.trans || 0); };
   material.onBeforeCompile = (shader) => {
     if (SurfaceDetail.enabled && material.userData.detailKind) enhanceShader(shader, material.userData.detailKind);
+    if (SurfaceDetail.enabled && material.userData.trans) addTranslucency(shader, material.userData.trans);
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uWind = uniforms.uWind;
     shader.uniforms.uFadeFar = uniforms.uFadeFar;
@@ -377,6 +389,7 @@ export class Vegetation {
     addSway(this.bushMat, 0.04, this.uniforms);
     this.grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.grassMat.userData.noDetail = true;
+    this.grassMat.userData.trans = 1.1;
     addSway(this.grassMat, 0.12, this.uniforms);
     this.flowerMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.flowerMat.userData.noDetail = true;
@@ -397,7 +410,7 @@ export class Vegetation {
     const F = buildFoliage();
     this.cardGeos = F.geos;
     this.leafMat = F.leafMat; this.needleMat = F.needleMat; this.bushLeafMat = F.leafMat.clone();
-    for (const [m, k] of [[this.leafMat, 0.02], [this.needleMat, 0.014], [this.bushLeafMat, 0.045]]) { m.userData.detailKind = 'foliage'; addSway(m, k, this.uniforms); }
+    for (const [m, k, tr] of [[this.leafMat, 0.02, 0.9], [this.needleMat, 0.014, 0.4], [this.bushLeafMat, 0.045, 0.75]]) { m.userData.detailKind = 'foliage'; m.userData.trans = tr; addSway(m, k, this.uniforms); }
     this.grassGeo = makeGrassTuft(rng);
     this.flowerGeo = makeFlower();
 
@@ -550,7 +563,7 @@ export class Vegetation {
       for (let cx = 0; cx < nG; cx++) {
         const items = [], flowers = [];
         const x0 = -HALF + cx * GRASS_CHUNK, z0 = -HALF + cz * GRASS_CHUNK;
-        const tries = 820;
+        const tries = 1150;
         for (let i = 0; i < tries; i++) {
           const px = x0 + rng() * GRASS_CHUNK, pz = z0 + rng() * GRASS_CHUNK;
           const h = T.getHeight(px, pz);

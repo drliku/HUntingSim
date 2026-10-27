@@ -1,6 +1,6 @@
 // World assembly: terrain, vegetation, environment, man-made landmarks and collision queries.
 import * as THREE from 'three';
-import { Terrain, riverX, LAKE, HALF } from './terrain.js';
+import { Terrain, riverX, LAKE, HALF, WATER_LEVEL } from './terrain.js';
 import { Vegetation } from './vegetation.js';
 import { Environment } from './environment.js';
 import { colorize, mergeColored, xf, cylinderBetween, ellipsoid } from './geo.js';
@@ -746,6 +746,7 @@ export class World {
   // Ground height including walkable platforms (for the player).
   groundAt(x, z, feetY) {
     let h = this.terrain.getHeight(x, z);
+    if (this.env.frozen && h < WATER_LEVEL) h = WATER_LEVEL;
     for (const p of this.platforms) {
       if (Math.abs(x - p.x) < p.hw && Math.abs(z - p.z) < p.hd && feetY >= p.y - 0.7) h = Math.max(h, p.y);
     }

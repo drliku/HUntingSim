@@ -164,7 +164,10 @@ export class Player {
 
     const wantSprint = input.isDown('ShiftLeft') || input.isDown('ShiftRight');
     this.holdBreath = ads && wantSprint && this.stamina > 0.02;
-    const h = this.world.terrain.getHeight(this.pos.x, this.pos.z);
+    const hT = this.world.terrain.getHeight(this.pos.x, this.pos.z);
+    // on frozen water you walk (and slide) on the ice instead of wading or swimming
+    const frozen = this.world.env.frozen, onIce = frozen && hT < -0.05;
+    const h = frozen ? Math.max(hT, 0) : hT;
     // swimming in deep water (with a little hysteresis so you don't flicker at the edge)
     const onPlatform = this.world.groundAt(this.pos.x, this.pos.z, this.pos.y) > h + 0.05;
     if (!onPlatform && -h > SWIM_DEPTH) this.swimming = true;
@@ -184,7 +187,7 @@ export class Player {
       if (this.stamina <= 0.02) speed = 1.1;
       if (fast) { this.stamina = Math.max(0, this.stamina - dt * 0.12); this.staminaDelay = 1.2; }
     } else if (this.inWater) speed *= h < -1.0 ? 0.45 : 0.65;
-    const k = this.swimming ? 3 : this.onGround ? 10 : 2;
+    const k = this.swimming ? 3 : this.onGround ? (onIce ? 1.8 : 10) : 2;
     this.vel.x = damp(this.vel.x, wx * speed, k, dt);
     this.vel.z = damp(this.vel.z, wz * speed, k, dt);
 

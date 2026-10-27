@@ -24,15 +24,54 @@ const GradeShader = {
     uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 768) },
     uTime: { value: 0 },
     uSharpen: { value: 0.35 },
+    uSunUv: { value: new THREE.Vector2(0.5, 0.5) },
+    uFlare: { value: 0 },
+    uFlareTint: { value: new THREE.Color(1, 0.9, 0.75) },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
     void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
-    uniform float uVignette, uSaturation, uContrast, uAspect, uTime, uSharpen;
-    uniform vec2 uTexel;
-    uniform vec3 uWarm, uCool;
+    uniform float uVignette, uSaturation, uContrast, uAspect, uTime, uSharpen, uFlare;
+    uniform vec2 uTexel, uSunUv;
+    uniform vec3 uWarm, uCool, uFlareTint;
+    // Lens flare: ghosts mirrored through the centre of the lens, a halo ring and a horizontal
+    // streak, only when the sun itself is not hidden behind trees or hills.
+    vec3 lensFlare(vec2 uv) {
+      float vis = 0.0;
+      for (int i = 0; i < 9; i++) {
+        vec2 o = vec2(float(i % 3) - 1.0, float(i / 3) - 1.0) * uTexel * 6.0;
+        vis += smoothstep(1.2, 3.5, dot(texture2D(tDiffuse, uSunUv + o).rgb, vec3(0.2126, 0.7152, 0.0722)));
+      }
+      vis /= 9.0;
+      if (vis < 0.01) return vec3(0.0);
+      vec2 asp = vec2(uAspect, 1.0);
+      vec2 toC = 0.5 - uSunUv;
+      vec3 f = vec3(0.0);
+      // ghosts
+      const vec4 G0 = vec4(0.45, 0.05, 0.4, 0.6), G1 = vec4(0.8, 0.03, 1.0, 0.65), G2 = vec4(1.25, 0.09, 0.55, 1.0), G3 = vec4(1.6, 0.025, 1.0, 0.45), G4 = vec4(1.9, 0.14, 0.35, 0.8);
+      vec4 gs[5]; gs[0] = G0; gs[1] = G1; gs[2] = G2; gs[3] = G3; gs[4] = G4;
+      vec3 tints[5]; tints[0] = vec3(0.35, 0.6, 1.0); tints[1] = vec3(1.0, 0.65, 0.3); tints[2] = vec3(0.45, 1.0, 0.6); tints[3] = vec3(1.0, 0.4, 0.5); tints[4] = vec3(0.5, 0.55, 1.0);
+      for (int i = 0; i < 5; i++) {
+        vec2 c = uSunUv + toC * 2.0 * gs[i].x;
+        float d = length((uv - c) * asp);
+        float r = gs[i].y;
+        float disc = smoothstep(r, r * 0.55, d) * (0.5 + 0.5 * smoothstep(r * 0.4, r, d));
+        f += tints[i] * disc * gs[i].w * gs[i].z * 0.55;
+      }
+      // halo ring around the sun, chromatic
+      float ds = length((uv - uSunUv) * asp);
+      f += vec3(1.0, 0.5, 0.3) * smoothstep(0.025, 0.0, abs(ds - 0.36)) * 0.04;
+      f += vec3(0.3, 0.6, 1.0) * smoothstep(0.025, 0.0, abs(ds - 0.385)) * 0.035;
+      // anamorphic streak
+      vec2 dd = (uv - uSunUv) * asp;
+      f += vec3(0.75, 0.85, 1.0) * exp(-abs(dd.y) * 300.0) * exp(-abs(dd.x) * 4.0) * 0.22;
+      // starburst glow right at the sun
+      float ang = atan(dd.y, dd.x);
+      f += uFlareTint * pow(max(0.0, 1.0 - ds * 3.0), 3.0) * (0.6 + 0.4 * pow(abs(sin(ang * 6.0 + 0.4)), 18.0)) * 0.9;
+      return f * uFlareTint * vis * uFlare;
+    }
     varying vec2 vUv;
     void main() {
       vec4 tex = texture2D(tDiffuse, vUv);
@@ -43,6 +82,7 @@ const GradeShader = {
       vec3 mn = min(c, min(min(n, s), min(e, w))), mx = max(c, max(max(n, s), max(e, w)));
       vec3 amt = sqrt(clamp(min(mn, 2.0 - mx) / max(mx, 1e-4), 0.0, 1.0)) * uSharpen;
       c = max(c + (c * 4.0 - (n + s + e + w)) * amt * 0.25, 0.0);
+      if (uFlare > 0.001) c += lensFlare(vUv);
       float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
       // contrast around mid grey (the image is still linear here, before tone mapping)
       c = 0.18 * pow(c / 0.18 + 1e-5, vec3(uContrast));
@@ -390,6 +430,9 @@ export class PostFX {
     const strength = Math.max(0, facing) > 0.05 && env.sunDir.y > -0.02 ? onScreen * Math.min(1, facing * 2) * Math.min(1, (env.sunDir.y + 0.02) * 6) * env.w.light * (1 - (env.w.rain || 0) * 0.8) : 0;
     this.rays.uniforms.uSun.value.set(sx, sy);
     this.rays.uniforms.uStrength.value = strength * 0.42;
+    this.grade.uniforms.uSunUv.value.set(sx, sy);
+    this.grade.uniforms.uFlare.value = strength * (1 - env.w.gray * 0.8) * 0.55;
+    this.grade.uniforms.uFlareTint.value.copy(this.rays.uniforms.uTint.value);
     this.rays.uniforms.uTint.value.setRGB(1, 0.86 + env.sunDir.y * 0.3, 0.68 + env.sunDir.y * 0.5);
   }
 

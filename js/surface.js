@@ -6,9 +6,12 @@
 import * as THREE from 'three';
 
 export const SurfaceDetail = { enabled: true };
+// How much snow has settled (0..1) and how wet everything is after rain; driven by the weather.
+export const SurfaceWeather = { uSnowCover: { value: 0 }, uWet: { value: 0 } };
 
 const NOISE = /* glsl */`
-varying vec3 vObjP;
+varying vec3 vObjP, vSWP;
+uniform float uSnowCover, uWet;
 float sdH(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float sdN(vec3 x) {
   vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -31,9 +34,19 @@ vec3 sdPerturb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDir) {
 export function enhanceShader(shader, kind = 'solid') {
   const bump = kind === 'solid' ? 0.55 : 0.0;
   const mottle = kind === 'solid' ? 0.3 : 0.22;
+  shader.uniforms.uSnowCover = SurfaceWeather.uSnowCover;
+  shader.uniforms.uWet = SurfaceWeather.uWet;
   shader.vertexShader = shader.vertexShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vObjP;')
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjP = position;');
+    .replace('#include <common>', '#include <common>\nvarying vec3 vObjP, vSWP;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjP = position;')
+    .replace('#include <project_vertex>', `#include <project_vertex>
+  {
+    vec4 swp = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      swp = instanceMatrix * swp;
+    #endif
+    vSWP = (modelMatrix * swp).xyz;
+  }`);
   shader.fragmentShader = shader.fragmentShader
     .replace('#include <common>', '#include <common>\n' + NOISE)
     .replace('#include <color_fragment>', `#include <color_fragment>
@@ -50,7 +63,16 @@ export function enhanceShader(shader, kind = 'solid') {
       float h = sdN(vObjP * 7.0) * 0.55 + sdN(vObjP * 19.0) * 0.3 + sdN(vObjP * 47.0) * 0.15;
       normal = sdPerturb(-vViewPosition, normal, vec2(dFdx(h), dFdy(h)) * amp * 0.06, faceDirection);
     }
-  }` : ''}`)
+  }` : ''}
+  // snow settles on everything that faces up (roofs, rocks, branches, antlers); rain darkens it all
+  float snowAmt = 0.0;
+  if (uSnowCover > 0.001) {
+    vec3 wN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+    float sn = sdN(vSWP * 1.7) * 0.6 + sdN(vSWP * 5.3) * 0.4;
+    snowAmt = smoothstep(0.3, 0.7, wN.y * 0.9 + sn * 0.35 - (1.0 - uSnowCover) * 0.9);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.89, 0.94), snowAmt);
+  }
+  diffuseColor.rgb *= 1.0 - uWet * 0.32 * (1.0 - snowAmt);`)
     .replace('#include <opaque_fragment>', `
   {
     // rim of sky light along silhouettes
@@ -61,6 +83,8 @@ export function enhanceShader(shader, kind = 'solid') {
       vec3 skyC = ambientLightColor;
     #endif
     outgoingLight += diffuseColor.rgb * skyC * pow(fr, 3.0) * ${kind === 'foliage' ? '0.45' : '0.32'};
+    // wet sheen: rain-soaked surfaces mirror the sky at grazing angles
+    outgoingLight += skyC * uWet * pow(fr, 5.0) * ${kind === 'foliage' ? '0.0' : '0.12'} * (1.0 - snowAmt);
   }
 #include <opaque_fragment>`);
 }

@@ -1,5 +1,6 @@
 // Terrain: height field, river/lake carving, biomes, trails and the terrain mesh.
 import * as THREE from 'three';
+import { SurfaceWeather } from './surface.js';
 import { fbm, noise2, smoothstep, lerp, clamp } from './utils.js';
 
 export const WORLD_SIZE = 480;
@@ -213,6 +214,8 @@ export class Terrain {
       map: makeGroundTexture(),
     });
     mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uSnowCover = SurfaceWeather.uSnowCover;
+      shader.uniforms.uWet = SurfaceWeather.uWet;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vTW;')
         .replace('#include <common>', '#include <common>\nvarying vec3 vTN;')
@@ -221,10 +224,12 @@ export class Terrain {
         .replace('#include <common>', `#include <common>
 varying vec3 vTW;
 varying vec3 vTN;
+uniform float uSnowCover, uWet;
 float th(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float tn(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(th(i), th(i + vec2(1.0, 0.0)), u.x), mix(th(i + vec2(0.0, 1.0)), th(i + vec2(1.0, 1.0)), u.x), u.y); }`)
         .replace('#include <color_fragment>', `#include <color_fragment>
+  float snowAmt = 0.0, puddle = 0.0;
   {
     vec2 q = vTW.xz;
     float m = tn(q * 0.03) * 0.55 + tn(q * 0.09 + 3.1) * 0.3 + tn(q * 0.4 + 7.7) * 0.15;
@@ -242,6 +247,18 @@ float tn(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 *
       r = mix(r, vec3(0.2, 0.27, 0.11) * (0.8 + 0.4 * strata), moss * 0.7);
       c = mix(c, r, rk);
     }
+    // snow blanket: thick on flat ground, thin and patchy on slopes, rock showing through on cliffs
+    if (uSnowCover > 0.001) {
+      float n = tn(q * 0.7) * 0.6 + tn(q * 2.9) * 0.4;
+      snowAmt = smoothstep(0.3, 0.7, normalize(vTN).y * 0.95 + n * 0.3 - (1.0 - uSnowCover) * 0.95 - rk * 0.35);
+      c = mix(c, vec3(0.76, 0.8, 0.86) * (0.88 + 0.12 * tn(q * 6.0) + 0.06 * tn(q * 0.5)), snowAmt);
+    }
+    // rain: darker soil, and puddles collecting on the flat
+    if (uWet > 0.001) {
+      c *= 1.0 - uWet * 0.3 * (1.0 - snowAmt);
+      puddle = uWet * smoothstep(0.68, 0.74, tn(q * 0.32 + 5.0) * 0.8 + tn(q * 1.9) * 0.2) * smoothstep(0.965, 0.99, normalize(vTN).y) * (1.0 - snowAmt);
+      c *= 1.0 - puddle * 0.45;
+    }
     diffuseColor.rgb = c;
   }`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
@@ -250,8 +267,30 @@ float tn(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 *
     float e = 0.35;
     float h0 = tn(q), hx = tn(q + vec2(e, 0.0)), hz = tn(q + vec2(0.0, e));
     vec3 g = vec3(hx - h0, 0.0, hz - h0) * 0.6;
-    normal = normalize(normal - (viewMatrix * vec4(g, 0.0)).xyz);
-  }`);
+    normal = normalize(normal - (viewMatrix * vec4(g, 0.0)).xyz * (1.0 - puddle) * (1.0 - snowAmt * 0.7));
+  }`)
+        .replace('#include <opaque_fragment>', `
+  {
+    #if NUM_HEMI_LIGHTS > 0
+      vec3 skyC = hemisphereLights[0].skyColor;
+    #else
+      vec3 skyC = ambientLightColor;
+    #endif
+    // puddles mirror the sky, more so at grazing angles
+    if (puddle > 0.001) {
+      vec3 upV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+      float fr = pow(1.0 - max(dot(upV, normalize(vViewPosition)), 0.0), 4.0);
+      outgoingLight = mix(outgoingLight, skyC * 0.5, puddle * (0.2 + 0.45 * fr) * (1.0 - smoothstep(6.0, 24.0, length(vViewPosition))));
+    }
+    // fresh snow glitters in the sun as you move
+    if (snowAmt > 0.5) {
+      float gl = step(0.9965, th(floor(vTW.xz * 24.0) + floor(cameraPosition.xz * 1.3) * 7.13));
+      #if NUM_DIR_LIGHTS > 0
+        outgoingLight += directionalLights[0].color * gl * 0.9 * (1.0 - smoothstep(10.0, 30.0, length(vViewPosition)));
+      #endif
+    }
+  }
+#include <opaque_fragment>`);
     };
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = true;

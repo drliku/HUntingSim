@@ -1,6 +1,7 @@
 // Sky dome, sun/moon lighting, day-night cycle, weather, precipitation, clouds, wind and water.
 import * as THREE from 'three';
 import { makeCloudNoise, CLOUD_GLSL } from './clouds.js';
+import { SurfaceWeather } from './surface.js';
 import { clamp, lerp, smoothstep, damp, mulberry32 } from './utils.js';
 import { WORLD_SIZE, WATER_LEVEL } from './terrain.js';
 
@@ -501,6 +502,15 @@ export class Environment {
     // At 0 °C and below the river and lake freeze over (from the shallows out), and thaw again above it.
     for (const key of ['temp', 'swing']) this.w[key] = lerp(this.w[key] ?? this.target[key], this.target[key], dt === 0 ? 1 : k * 0.4);
     this.tempC = this.w.temp + this.w.swing * Math.cos((this.time - 15) / 24 * Math.PI * 2);
+    // snow settles while it snows below freezing and melts once it is warm; rain soaks things and they dry slowly
+    const snowing = this.w.snow > 0.3 && this.tempC <= 1, raining = this.w.rain > 0.2;
+    if (this.iceSnap || dt === 0) { this.snowCover = snowing ? 1 : 0; this.wet = raining ? 1 : 0; }
+    else {
+      this.snowCover = clamp((this.snowCover || 0) + (snowing ? dt / 45 : this.tempC > 1 ? -dt / 90 : 0), 0, 1);
+      this.wet = clamp((this.wet || 0) + (raining ? dt / 15 : -dt / (this.daylight > 0.5 ? 90 : 180)), 0, 1);
+    }
+    SurfaceWeather.uSnowCover.value = this.snowCover;
+    SurfaceWeather.uWet.value = this.wet * (1 - this.snowCover);
     const freezing = this.tempC <= 0;
     if (this.iceSnap || dt === 0) { this.ice = freezing ? 1 : 0; this.iceSnap = false; }
     else this.ice = clamp((this.ice || 0) + (freezing ? dt / 25 : -dt / 40), 0, 1);

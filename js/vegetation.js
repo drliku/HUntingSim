@@ -1,6 +1,6 @@
 // Instanced, chunked vegetation (trees, bushes, rocks, grass, flowers) + spatial hash for collisions.
 import * as THREE from 'three';
-import { enhanceShader, SurfaceDetail } from './surface.js';
+import { enhanceShader, SurfaceDetail, SurfaceWeather } from './surface.js';
 import { buildFoliage } from './foliage.js';
 import { colorize, mergeColored, xf, jitterVertices, shadeVertical } from './geo.js';
 import { mulberry32, smoothstep, noise2 } from './utils.js';
@@ -338,10 +338,16 @@ function addTranslucency(shader, k) {
 }
 
 function addSway(material, strength, uniforms) {
-  material.customProgramCacheKey = function () { return THREE.MeshLambertMaterial.prototype.customProgramCacheKey.call(this) + '|sw' + strength + '|tr' + (this.userData.trans || 0); };
+  material.customProgramCacheKey = function () { return THREE.MeshLambertMaterial.prototype.customProgramCacheKey.call(this) + '|sw' + strength + '|tr' + (this.userData.trans || 0) + (this.userData.frost ? '|fr' : ''); };
   material.onBeforeCompile = (shader) => {
     if (SurfaceDetail.enabled && material.userData.detailKind) enhanceShader(shader, material.userData.detailKind);
     if (SurfaceDetail.enabled && material.userData.trans) addTranslucency(shader, material.userData.trans);
+    if (material.userData.frost) {
+      // grass and flowers half buried and frosted when snow has settled
+      shader.uniforms.uSnowCover = SurfaceWeather.uSnowCover;
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uSnowCover;')
+        .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.84, 0.88), uSnowCover * 0.7);');
+    }
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uWind = uniforms.uWind;
     shader.uniforms.uFadeFar = uniforms.uFadeFar;
@@ -390,9 +396,11 @@ export class Vegetation {
     this.grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.grassMat.userData.noDetail = true;
     this.grassMat.userData.trans = 1.1;
+    this.grassMat.userData.frost = true;
     addSway(this.grassMat, 0.12, this.uniforms);
     this.flowerMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.flowerMat.userData.noDetail = true;
+    this.flowerMat.userData.frost = true;
     addSway(this.flowerMat, 0.1, this.uniforms);
 
     // light models for distance, detailed ones for trees near the camera

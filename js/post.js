@@ -42,7 +42,7 @@ const GradeShader = {
       float vis = 0.0;
       for (int i = 0; i < 9; i++) {
         vec2 o = vec2(float(i % 3) - 1.0, float(i / 3) - 1.0) * uTexel * 6.0;
-        vis += smoothstep(1.2, 3.5, dot(texture2D(tDiffuse, uSunUv + o).rgb, vec3(0.2126, 0.7152, 0.0722)));
+        vis += smoothstep(2.2, 5.0, dot(texture2D(tDiffuse, uSunUv + o).rgb, vec3(0.2126, 0.7152, 0.0722)));
       }
       vis /= 9.0;
       if (vis < 0.01) return vec3(0.0);

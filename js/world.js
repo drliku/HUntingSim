@@ -6,6 +6,7 @@ import { Environment } from './environment.js';
 import { colorize, mergeColored, xf, cylinderBetween, ellipsoid } from './geo.js';
 import { Avatar } from './avatar.js';
 import { decorateCabin, decorateStore } from './buildings.js';
+import { buildFarLand } from './farland.js';
 
 export const LOCATIONS = [
   { name: 'Cabin Clearing', x: -40, z: -54, desc: 'Starting point and campfire' },
@@ -64,6 +65,7 @@ export class World {
     });
     this.buildPois();
     this.terrain.finishEdits();
+    this.farLand = buildFarLand(scene);
     this.env.setWaterDepth(this.terrain);
     // soft shade on the ground under trees, around rocks and buildings
     const spots = [];

@@ -10,6 +10,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { WATER_LEVEL } from './terrain.js';
+import { WaterReflection } from './reflection.js';
 
 const GradeShader = {
   uniforms: {
@@ -173,7 +174,7 @@ const COMPOSE_FS = /* glsl */`
       q = q * 0.018 + uCloudOff;
       float n = vnoise(q) * 0.62 + vnoise(q * 2.3 + 7.1) * 0.28 + vnoise(q * 5.1 - 3.3) * 0.1;
       float sh = smoothstep(0.52, 0.6, n);
-      c *= 1.0 - sh * uCloud;
+      c *= 1.0 - sh * uCloud * (1.0 - smoothstep(120.0, 320.0, dist)); // far away the haze hides them
     }
     // low mist hugging the water and the hollows
     if (uMist > 0.001 && dist < 380.0) {
@@ -248,6 +249,7 @@ export class PostFX {
     this.equipment = equipment;
     this.enabled = false;
     this.composer = null;
+    this.reflection = new WaterReflection(quality);
     this.setQuality(quality);
   }
 
@@ -283,6 +285,7 @@ export class PostFX {
 
   setQuality(q) {
     const want = !!q.post;
+    if (this.reflection) { this.reflection.setQuality(q); this.reflection.setSize(window.innerWidth * this.renderer.getPixelRatio(), window.innerHeight * this.renderer.getPixelRatio()); }
     if (this.composer) { this.composer.renderTarget1.dispose(); this.composer.renderTarget2.dispose(); this.atmos?.dispose(); this.composer = null; }
     this.enabled = want;
     if (want) {
@@ -291,6 +294,7 @@ export class PostFX {
   }
 
   setSize(w, h) {
+    this.reflection.setSize(w * this.renderer.getPixelRatio(), h * this.renderer.getPixelRatio());
     if (!this.composer) return;
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
     this.composer.setSize(w, h);
@@ -299,6 +303,7 @@ export class PostFX {
 
   // night and weather change how strong the bloom and grading look
   update(env) {
+    this.env = env;
     if (!this.enabled) return;
     const day = env.daylight;
     this.bloom.strength = 0.22 + (1 - day) * 0.35 + (env.w.fog < 0.6 ? 0.06 : 0);
@@ -336,6 +341,13 @@ export class PostFX {
 
   render(showWeapon) {
     this.vmPass.enabled = showWeapon && Object.values(this.equipment.models).some((m) => m.visible);
+    const wu = this.env && this.env.waterUniforms;
+    if (wu && wu.tRefl) {
+      this.reflection.render(this.renderer, this.scene, this.camera);
+      wu.tRefl.value = this.reflection.target.texture;
+      wu.uReflMat.value = this.reflection.textureMatrix;
+      wu.uRefl.value = this.reflection.active ? 1 : 0;
+    }
     this.composer.render();
   }
 }

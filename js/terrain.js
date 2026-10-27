@@ -8,6 +8,15 @@ export const PLAY_LIMIT = 205; // player/animal boundary
 export const WATER_LEVEL = 0;
 
 export const LAKE = { x: -110, z: 95, r: 27 };
+// the shore wanders in and out around the lake instead of being a perfect circle
+export function lakeRadiusAt(angle) {
+  return LAKE.r * (1 + 0.13 * Math.sin(3 * angle + 0.7) + 0.07 * Math.sin(5 * angle + 2.1) + 0.04 * Math.sin(9 * angle + 4.0));
+}
+// distance from the lake centre in units where the (wobbly) shore is always at LAKE.r
+export function lakeDist(x, z) {
+  const dx = x - LAKE.x, dz = z - LAKE.z;
+  return Math.hypot(dx, dz) * LAKE.r / lakeRadiusAt(Math.atan2(dz, dx));
+}
 
 export const MEADOWS = [
   { x: -40, z: -60, r: 24, name: 'Cabin Clearing' },
@@ -91,7 +100,7 @@ export function heightAnalytic(x, z) {
   }
   // Lake
   {
-    const dl = Math.hypot(x - LAKE.x, z - LAKE.z);
+    const dl = lakeDist(x, z);
     const target = dl < LAKE.r ? -2.2 * (1 - (dl / LAKE.r) ** 2) : (dl - LAKE.r) * 0.1;
     const t = smoothstep(LAKE.r, LAKE.r + 28, dl);
     h = lerp(target, h, t);
@@ -110,7 +119,7 @@ export function forestDensityAnalytic(x, z) {
     f *= smoothstep(m.r * 0.75, m.r * 1.3, d);
   }
   f *= smoothstep(1, 12, riverDistance(x, z));
-  f *= smoothstep(LAKE.r + 2, LAKE.r + 14, Math.hypot(x - LAKE.x, z - LAKE.z));
+  f *= smoothstep(LAKE.r + 2, LAKE.r + 14, lakeDist(x, z));
   f *= smoothstep(2.5, 7, trailDistance(x, z));
   return clamp(f, 0, 1);
 }
@@ -354,9 +363,9 @@ float tn(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 *
     const rx = riverX(z), hw = riverHalfWidth(z);
     const side = x >= rx ? 1 : -1;
     const river = { x: rx + side * (hw + 1.2), z, d: Math.abs(x - (rx + side * (hw + 1.2))) };
-    const dl = Math.hypot(x - LAKE.x, z - LAKE.z) || 1;
-    const lx = LAKE.x + ((x - LAKE.x) / dl) * (LAKE.r + 1.5);
-    const lz = LAKE.z + ((z - LAKE.z) / dl) * (LAKE.r + 1.5);
+    const dl = Math.hypot(x - LAKE.x, z - LAKE.z) || 1, rs = lakeRadiusAt(Math.atan2(z - LAKE.z, x - LAKE.x)) + 1.5;
+    const lx = LAKE.x + ((x - LAKE.x) / dl) * rs;
+    const lz = LAKE.z + ((z - LAKE.z) / dl) * rs;
     const ld = Math.hypot(x - lx, z - lz);
     return ld < river.d ? { x: lx, z: lz, d: ld } : river;
   }

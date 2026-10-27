@@ -7,7 +7,7 @@ import { SPECIES, BIRD_ORDER, BIRD_POPULATION } from './species.js';
 import { createBirdRig, poseWings } from './birdModel.js';
 import { animalMaterial } from './animalModel.js';
 import { clamp, damp, dampAngle, angleDiff, smoothstep } from './utils.js';
-import { PLAY_LIMIT, LAKE, riverX, riverHalfWidth, WATER_LEVEL } from './terrain.js';
+import { PLAY_LIMIT, LAKE, riverX, riverHalfWidth, WATER_LEVEL, lakeRadiusAt } from './terrain.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
 let nextId = 1;
@@ -399,7 +399,8 @@ export class BirdManager {
       if (h > -0.45 && h < 0.1) return { x: px, z: pz };
     }
     const a = Math.random() * 6.28;
-    return { x: LAKE.x + Math.cos(a) * (LAKE.r - 1), z: LAKE.z + Math.sin(a) * (LAKE.r - 1) };
+    const rs = lakeRadiusAt(a) - 1;
+    return { x: LAKE.x + Math.cos(a) * rs, z: LAKE.z + Math.sin(a) * rs };
   }
 
   treePerch(x, z, radius) {

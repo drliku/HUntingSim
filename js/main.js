@@ -65,7 +65,7 @@ async function boot() {
 
   const scene = new THREE.Scene();
   G.scene = scene;
-  const camera = new THREE.PerspectiveCamera(settings.fov, window.innerWidth / window.innerHeight, 0.1, 520);
+  const camera = new THREE.PerspectiveCamera(settings.fov, window.innerWidth / window.innerHeight, 0.1, 950);
   camera.rotation.order = 'YXZ';
   G.camera = camera;
 
@@ -117,8 +117,10 @@ async function boot() {
   equipment.setSleeveColor(lookColor('jacket', loadLook().jacket));
   const post = new PostFX(renderer, scene, camera, equipment, q);
   G.post = post;
+  post.reflection.hidden = [world.env.water, ...world.veg.grassChunks.flatMap((g) => [g.mesh, g.flowers].filter(Boolean))];
   const ambient = new Ambient(scene);
   G.ambient = ambient;
+  post.reflection.hidden.push(ambient.flies.pts, ambient.dust.pts, ambient.leaves);
   world.env.camRef = camera;
   // draw one frame: through the post-processing chain when it is on, directly otherwise
   const renderFrame = (showWeapon) => {

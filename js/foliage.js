@@ -32,19 +32,23 @@ function needleTexture() {
   cv.width = cv.height = S;
   const c = cv.getContext('2d'), r = rng(11);
   c.lineCap = 'round';
-  // three overlapping sprigs: a twig with thick, close-set needles on both sides
-  for (let k = 0; k < 3; k++) {
-    const x0 = 55 + k * 72 + (r() - 0.5) * 12, len = 200 + r() * 40;
-    for (let t = 0.02; t < 1; t += 0.018) {
-      const px = x0 + Math.sin(t * 3 + k) * 6, py = 8 + t * len;
-      for (const sd of [-1, 1]) {
-        const v = Math.round(150 + r() * 105), nl = (30 - t * 12) * (0.8 + r() * 0.4);
-        c.strokeStyle = `rgb(${v},${v},${v})`; c.lineWidth = 3.6;
-        c.beginPath(); c.moveTo(px, py); c.lineTo(px + sd * nl, py + nl * 0.45 + (r() - 0.5) * 6); c.stroke();
+  // a tangle of drooping twigs, each bristling with needles at random angles; drawn in
+  // several layers so the card reads as a dense mass of needles, not neat fishbones
+  for (let k = 0; k < 9; k++) {
+    let x = 20 + r() * (S - 40), y = 4 + r() * 30, a = Math.PI / 2 + (r() - 0.5) * 0.9;
+    const len = 120 + r() * 120, steps = Math.round(len / 5);
+    for (let i = 0; i < steps; i++) {
+      a += (r() - 0.5) * 0.12;
+      x += Math.cos(a) * 5; y += Math.sin(a) * 5;
+      if (x < 6 || x > S - 6 || y > S - 6) break;
+      const fade = 1 - i / steps;
+      for (let j = 0; j < 3; j++) {
+        const na = a + (r() < 0.5 ? -1 : 1) * (0.5 + r() * 0.9), nl = (12 + r() * 14) * (0.6 + fade * 0.5);
+        const v = Math.round(130 + r() * 125);
+        c.strokeStyle = `rgb(${v},${v},${v})`; c.lineWidth = 2.6 + r() * 1.4;
+        c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(na) * nl, y + Math.sin(na) * nl); c.stroke();
       }
     }
-    c.strokeStyle = 'rgb(110,100,85)'; c.lineWidth = 4;
-    c.beginPath(); c.moveTo(x0, 8); c.lineTo(x0 + Math.sin(3 + k) * 6, 8 + len); c.stroke();
   }
   return finish(cv);
 }
@@ -119,32 +123,36 @@ function crownCards(clumps, { seed, size, density, sy = 1, sxz = 1, dark, light 
 
 // Needle fringes hanging from the rims of the pine's branch layers, plus some on top of each layer
 function pineCards() {
-  const K = new Cards(), r = rng(31), o = _v(), a = _v(), b = _v(), nl = _v(), col = new THREE.Color();
+  const K = new Cards(), r = rng(31), o = _v(), a = _v(), b = _v(), nl = _v(), col = new THREE.Color(), tip = new THREE.Color(0x6a8a44);
   const layers = 7;
+  // rotate a card's two half-axes around its normal by a random angle so no two line up
+  const twist = (n, amt) => { const q = new THREE.Quaternion().setFromAxisAngle(n, (r() - 0.5) * amt); a.applyQuaternion(q); b.applyQuaternion(q); };
   for (let i = 0; i < layers; i++) {
     const tt = i / (layers - 1);
     const R = 2.05 - tt * 1.6, h = 1.9 - tt * 0.85, y0 = 1.7 + i * 0.95;
     const dark = new THREE.Color([0x1b3a20, 0x1f4024, 0x234628, 0x274c2b, 0x2a512e, 0x2e5732, 0x325c35][i]);
-    const n = Math.round(10 + R * 7);
+    const n = Math.round(12 + R * 8);
     for (let k = 0; k < n; k++) {
-      const ang = (k / n) * Math.PI * 2 + i * 0.55 + r() * 0.3;
+      const ang = (k / n) * Math.PI * 2 + i * 0.55 + (r() - 0.5) * 0.5;
       const ca = Math.cos(ang), sa = Math.sin(ang);
-      // fringe card: spans the tangent, hangs out and down from the rim
-      const rr = R * (0.86 + r() * 0.12);
-      o.set(ca * rr, y0 + 0.02, sa * rr);
-      a.set(-sa, 0, ca).multiplyScalar(0.36 + R * 0.12);
-      b.set(ca * 0.75, -0.5, sa * 0.75).normalize().multiplyScalar(0.26 + r() * 0.1);
+      // fringe hanging out and down from the rim
+      const rr = R * (0.84 + r() * 0.16);
+      o.set(ca * rr, y0 + 0.02 + (r() - 0.5) * 0.1, sa * rr);
+      a.set(-sa, 0, ca).multiplyScalar((0.34 + R * 0.12) * (0.8 + r() * 0.4));
+      b.set(ca * 0.75, -0.5 - r() * 0.2, sa * 0.75).normalize().multiplyScalar(0.26 + r() * 0.14);
       nl.set(ca, 0.6, sa).normalize();
-      col.copy(dark).lerp(new THREE.Color(0x6a8a44), 0.5 + r() * 0.25);
+      twist(nl, 0.6);
+      col.copy(dark).lerp(tip, 0.4 + r() * 0.35).multiplyScalar(0.85 + r() * 0.3);
       K.quad(o.clone().add(b), a, b, nl, col, r() < 0.5);
-      // a card lying along the upper slope of the layer
-      if (k % 2 === 0) {
-        const rm = R * (0.45 + r() * 0.3);
-        o.set(ca * rm, y0 + h * (1 - rm / R) * 0.9 + 0.05, sa * rm);
-        a.set(-sa, 0, ca).multiplyScalar(0.4);
-        b.set(ca, -h / R * 0.9, sa).normalize().multiplyScalar(0.45);
-        nl.set(ca * 0.5, 1, sa * 0.5).normalize();
-        col.copy(dark).lerp(new THREE.Color(0x6a8a44), 0.4 + r() * 0.25);
+      // two cards draped over the upper slope at random depths, covering the smooth cone
+      for (let m = 0; m < 2; m++) {
+        const rm = R * (0.25 + r() * 0.6), am = ang + (r() - 0.5) * 0.6, cm = Math.cos(am), sm = Math.sin(am);
+        o.set(cm * rm, y0 + h * (1 - rm / R) * 0.92 + 0.06, sm * rm);
+        a.set(-sm, 0, cm).multiplyScalar(0.3 + r() * 0.2);
+        b.set(cm, -h / R * 0.9, sm).normalize().multiplyScalar(0.32 + r() * 0.2);
+        nl.set(cm * 0.5, 1, sm * 0.5).normalize();
+        twist(nl, 1.2);
+        col.copy(dark).lerp(tip, 0.3 + r() * 0.4).multiplyScalar(0.85 + r() * 0.3);
         K.quad(o, a, b, nl, col, r() < 0.5);
       }
     }

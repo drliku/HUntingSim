@@ -132,17 +132,22 @@ const SKY_KEYS = [
 
 const WATER_VS = `
 #include <fog_pars_vertex>
+uniform mat4 uReflMat;
 varying vec3 vWPos;
+varying vec4 vRefl;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWPos = wp.xyz;
+  vRefl = uReflMat * wp;
   vec4 mvPosition = viewMatrix * wp;
   gl_Position = projectionMatrix * mvPosition;
   #include <fog_vertex>
 }`;
 const WATER_FS = `
 uniform float uTime, uHalf, uDaylight;
-uniform sampler2D uDepth;
+uniform sampler2D uDepth, tRefl;
+uniform float uRefl;
+varying vec4 vRefl;
 uniform vec3 uDeep, uShallow, uSkyTop, uSkyHorizon, uSunDir, uSunColor;
 varying vec3 vWPos;
 #include <fog_pars_fragment>
@@ -155,23 +160,30 @@ void main() {
   float depth = texture2D(uDepth, (p + uHalf) / (2.0 * uHalf)).r * 4.0;
   // layered moving ripples
   vec3 n = normalize(vec3(
-    0.06 * sin(p.x * 0.9 + t * 1.3) * cos(p.y * 0.7 - t * 1.1) + 0.035 * sin(p.x * 2.3 - p.y * 1.7 + t * 2.1) + 0.02 * sin((p.x + p.y) * 4.1 + t * 3.3) + (vn(p * 3.0 + t * 0.6) - 0.5) * 0.05,
+    0.03 * sin(p.x * 0.9 + t * 1.3) * cos(p.y * 0.7 - t * 1.1) + 0.025 * sin(p.x * 2.3 - p.y * 1.7 + t * 2.1) + 0.015 * sin((p.x + p.y) * 4.1 + t * 3.3) + (vn(p * 3.0 + t * 0.6) - 0.5) * 0.06 + (vn(p * 9.0 - t * 0.9) - 0.5) * 0.03,
     1.0,
-    0.05 * cos(p.y * 0.8 + t * 1.2) * sin(p.x * 0.6 - t) + 0.03 * sin(p.y * 2.7 + p.x * 1.3 - t * 1.8) + 0.02 * cos((p.x - p.y) * 3.7 - t * 2.9) + (vn(p * 3.0 - t * 0.5 + 7.0) - 0.5) * 0.05));
+    0.025 * cos(p.y * 0.8 + t * 1.2) * sin(p.x * 0.6 - t) + 0.022 * sin(p.y * 2.7 + p.x * 1.3 - t * 1.8) + 0.015 * cos((p.x - p.y) * 3.7 - t * 2.9) + (vn(p * 3.0 - t * 0.5 + 7.0) - 0.5) * 0.06 + (vn(p * 9.0 + t * 0.8 + 3.0) - 0.5) * 0.03));
   vec3 V = normalize(cameraPosition - vWPos);
   float fres = mix(0.03, 1.0, pow(1.0 - max(dot(n, V), 0.0), 4.0));
   vec3 R = reflect(-V, n);
   vec3 sky = mix(uSkyHorizon, uSkyTop, clamp(R.y * 1.6, 0.0, 1.0));
+  // mirrored scene, rippled by the waves (falls back to the sky colours when not available)
+  if (uRefl > 0.5) {
+    vec2 ruv = vRefl.xy / vRefl.w + n.xz * 0.35;
+    sky = texture2D(tRefl, clamp(ruv, 0.002, 0.998)).rgb;
+  }
   vec3 body = mix(uShallow, uDeep, smoothstep(0.0, 2.5, depth)) * (0.25 + 0.75 * uDaylight);
-  vec3 col = mix(body, sky, fres * 0.85);
+  vec3 col = mix(body, sky, uRefl > 0.5 ? clamp(fres * 1.15 + 0.12, 0.0, 0.95) : fres * 0.85);
   float sd = max(dot(R, normalize(uSunDir)), 0.0);
   col += uSunColor * (pow(sd, 260.0) * 5.0 + pow(sd, 24.0) * 0.18) * step(0.0, uSunDir.y);
   // foam where the water meets the shore
   float fn = vn(p * 2.6 + vec2(t * 0.35, t * 0.27)) * 0.6 + vn(p * 7.0 - t * 0.5) * 0.4;
-  float foam = smoothstep(0.22, 0.02, depth - fn * 0.14) * smoothstep(-0.02, 0.03, depth);
-  col = mix(col, vec3(0.85, 0.9, 0.9) * (0.3 + 0.7 * uDaylight), foam * 0.7);
+  float foam = smoothstep(0.1, 0.0, depth - fn * 0.1) * smoothstep(-0.02, 0.02, depth);
+  foam *= smoothstep(0.35, 0.75, vn(p * 0.9 + vec2(t * 0.08, -t * 0.06)) * 0.7 + fn * 0.3);
+  col = mix(col, vec3(0.78, 0.83, 0.82) * (0.3 + 0.7 * uDaylight), foam * 0.55);
   float alpha = mix(0.4, 0.9, smoothstep(0.0, 1.3, depth));
-  alpha = max(max(alpha, fres * 0.92), foam * 0.85);
+  alpha = max(max(alpha, fres * 0.92), foam * 0.7);
+  if (uRefl > 0.5) alpha = max(alpha, 0.55 + fres * 0.4);
   gl_FragColor = vec4(col, alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -247,7 +259,8 @@ export class Environment {
 
     // Fog
     this.fogColor = new THREE.Color();
-    scene.fog = new THREE.Fog(0xaabbcc, 20, this.viewDist);
+    scene.fog = new THREE.FogExp2(0xaabbcc, 0.85 / this.viewDist);
+    this.fogDensity = { value: scene.fog.density };
 
     this.buildPrecipitation(rng);
     this.buildWater();
@@ -310,7 +323,7 @@ export class Environment {
 
   // Three rings of distant mountains, fading into the horizon colour with distance
   buildMountains() {
-    const layers = [[300, 1.35, 0.22], [370, 1.8, 0.4], [440, 2.3, 0.58]];
+    const layers = [[560, 2.3, 0.22], [670, 3.0, 0.4], [780, 3.7, 0.58]];
     const U = this.skyUniforms;
     this.mountains = [];
     layers.forEach(([R, hk, fade], li) => {
@@ -330,18 +343,19 @@ export class Environment {
       g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       g.setIndex(idx);
       const mat = new THREE.ShaderMaterial({
-        uniforms: { uHorizon: U.uHorizon, uTop: U.uTop, uSunColor: U.uSunColor, uSunDir: U.uSunDir, uFade: { value: fade }, uFogK: { value: 1 } },
+        uniforms: { uHorizon: U.uHorizon, uTop: U.uTop, uSunColor: U.uSunColor, uSunDir: U.uSunDir, uFade: { value: fade }, uFogK: { value: 1 }, uFogCol: { value: this.scene.fog.color }, uDensity: this.fogDensity },
         vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-        fragmentShader: `uniform vec3 uHorizon, uTop, uSunColor, uSunDir; uniform float uFade, uFogK; varying vec3 vP;
+        fragmentShader: `uniform vec3 uHorizon, uTop, uSunColor, uSunDir, uFogCol; uniform float uFade, uFogK, uDensity; varying vec3 vP;
           void main(){
-            float hy = clamp(vP.y / 100.0, 0.0, 1.0);
+            float hy = clamp(vP.y / 220.0, 0.0, 1.0);
             vec3 rock = mix(uHorizon * 0.42, uTop * 0.55, 0.3) * (0.7 + 0.3 * hy);
             vec3 lit = uSunColor * 0.12 * max(0.0, dot(normalize(vec3(vP.x, 0.0, vP.z)), normalize(uSunDir)));
-            float snow = smoothstep(70.0, 95.0, vP.y) * (1.0 - uFade * 0.4);
+            float snow = smoothstep(150.0, 200.0, vP.y) * (1.0 - uFade * 0.4);
             vec3 c = mix(rock + lit, uHorizon * 1.15, snow * 0.6);
             // aerial haze: the farther the range and the lower on the slope, the more it melts into the horizon
-            float haze = clamp(uFade + (1.0 - hy) * 0.25, 0.0, 1.0) * uFogK;
-            gl_FragColor = vec4(mix(c, uHorizon, haze), 1.0);
+            float d = length(vP.xz - cameraPosition.xz) * uDensity * 0.36;
+            float haze = clamp((1.0 - exp(-d * d)) * 0.85 + uFade * 0.25 + (1.0 - hy) * 0.15, 0.0, 1.0) * uFogK;
+            gl_FragColor = vec4(mix(c, mix(uFogCol, uHorizon, 0.35), haze), 1.0);
             #include <tonemapping_fragment>
             #include <colorspace_fragment>
           }`,
@@ -394,11 +408,13 @@ export class Environment {
     const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       uTime: this.waterUniforms.uTime, uDepth: { value: tex }, uHalf: { value: WORLD_SIZE / 2 },
       uDeep: { value: new THREE.Color(0x1d3a44) }, uShallow: { value: new THREE.Color(0x4a7a6a) }, uDaylight: { value: 1 },
+      tRefl: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uRefl: { value: 0 },
     }]);
     // share the sky's live colours and sun direction
     uniforms.uSkyTop = U.uTop; uniforms.uSkyHorizon = U.uHorizon; uniforms.uSunDir = U.uSunDir; uniforms.uSunColor = U.uSunColor;
     uniforms.uTime = this.waterUniforms.uTime;
     this.waterUniforms.uDaylight = uniforms.uDaylight;
+    this.waterUniforms.tRefl = uniforms.tRefl; this.waterUniforms.uReflMat = uniforms.uReflMat; this.waterUniforms.uRefl = uniforms.uRefl;
     const mat = new THREE.ShaderMaterial({
       uniforms, vertexShader: WATER_VS, fragmentShader: WATER_FS, transparent: true, depthWrite: false, fog: true,
     });
@@ -532,8 +548,8 @@ export class Environment {
     for (const m of this.mountains || []) m.material.uniforms.uFogK.value = clamp(1.25 - this.w.fog * 0.25, 0, 1);
     this.scene.fog.color.copy(this.fogColor);
     const far = this.viewDist * this.w.fog;
-    this.scene.fog.far = far;
-    this.scene.fog.near = Math.min(far * 0.15, 30);
+    this.scene.fog.density = 0.85 / far;
+    this.fogDensity.value = this.scene.fog.density;
 
     // Procedural clouds drift with the wind (rendered in the sky shader)
     const su = this.skyUniforms;

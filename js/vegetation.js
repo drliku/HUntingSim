@@ -332,6 +332,9 @@ function addSway(material, strength, uniforms) {
     if (SurfaceDetail.enabled && material.userData.detailKind) enhanceShader(shader, material.userData.detailKind);
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uWind = uniforms.uWind;
+    shader.uniforms.uFadeFar = uniforms.uFadeFar;
+    shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying float vFadeD;').replace('#include <project_vertex>', '#include <project_vertex>\nvFadeD = -mvPosition.z;');
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uFadeFar;\nvarying float vFadeD;').replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n  { float fd = smoothstep(uFadeFar * 0.82, uFadeFar, vFadeD); if (fd > 0.0 && fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453) < fd) discard; }');
     shader.vertexShader = 'uniform float uTime;\nuniform vec2 uWind;\n' + shader.vertexShader.replace(
       '#include <begin_vertex>',
       `#include <begin_vertex>
@@ -362,7 +365,7 @@ export class Vegetation {
     this.bushes = [];           // positions used by rabbits for hiding
     this.chunks = [];
     this.grassChunks = [];
-    this.uniforms = { uTime: { value: 0 }, uWind: { value: new THREE.Vector2(1, 0) } };
+    this.uniforms = { uTime: { value: 0 }, uWind: { value: new THREE.Vector2(1, 0) }, uFadeFar: { value: 230 } };
     const rng = mulberry32(777);
 
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -625,6 +628,7 @@ export class Vegetation {
 
   update(dt, camPos, viewDist, wind) {
     this.uniforms.uTime.value += dt;
+    this.uniforms.uFadeFar.value = viewDist;
     this.uniforms.uWind.value.set(wind.x, wind.z);
     for (const c of this.chunks) {
       const d = Math.hypot(c.x - camPos.x, c.z - camPos.z) - CHUNK * 0.71;

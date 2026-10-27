@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { G, settings, saveSettings, saveProgress } from './state.js';
 import { SPECIES, SPECIES_ORDER, MAMMAL_ORDER, BIRD_ORDER } from './species.js';
-import { PORTION_KG, CARRY_KG } from './survival.js';
+import { PORTION_KG, CARRY_KG, WOOD_HOURS, MAX_FUEL } from './survival.js';
 import { STORES, MEAT_PRICE, priceOf, DIFFICULTY } from './modes.js';
 import { FORAGE } from './forage.js';
 import { ITEMS, WEAPONS } from './equipment.js';
@@ -222,6 +222,11 @@ export class UI {
       if (this.wasFrozen !== undefined) this.toast(env.frozen ? 'The water has frozen over. You can walk on the ice.' : 'The ice is thawing. The water is open again.');
       this.wasFrozen = env.frozen;
     }
+    const night = env.isNight();
+    if (night !== this.wasNight) {
+      if (night && this.wasNight !== undefined) this.toast('Night is falling and the predators are out hunting. Stay by a lit campfire, get indoors, or lie flat and still in the grass (Z).', 'warn');
+      this.wasNight = night;
+    }
     const ws = Math.hypot(env.wind.x, env.wind.z);
     const windTo = (Math.atan2(env.wind.x, -env.wind.z) * 180 / Math.PI + 360) % 360;
     this.el['wind-arrow'].style.transform = `rotate(${windTo - bearing}deg)`;
@@ -262,7 +267,7 @@ export class UI {
     if (this.el.money.textContent !== money) this.el.money.textContent = money;
 
     // stealth
-    this.el.stance.textContent = P.inBed ? (P.inBed.spot.chair ? 'Sitting on the porch' : 'Resting in bed') : P.swimming ? 'Swimming' : P.inWater ? 'Wading' : P.crouch ? (P.moving ? 'Stalking' : 'Crouched') : P.sprinting ? 'Sprinting' : P.moving ? 'Walking' : 'Standing';
+    this.el.stance.textContent = P.inBed ? (P.inBed.spot.chair ? 'Sitting on the porch' : 'Resting in bed') : P.swimming ? 'Swimming' : P.inWater ? 'Wading' : P.prone ? (P.hidden ? 'Hidden in the grass' : P.moving ? 'Crawling' : 'Lying down') : P.crouch ? (P.moving ? 'Stalking' : 'Crouched') : P.sprinting ? 'Sprinting' : P.moving ? 'Walking' : 'Standing';
     this.el['noise-bar'].style.width = `${P.noise * 100}%`;
     this.el['vis-bar'].style.width = `${P.visibility * env.visibilityFactor() * 100}%`;
     let maxA = 0, fleeing = false;
@@ -448,6 +453,7 @@ export class UI {
     const S = G.survival;
     const names = { beans: 'Can of beans', bandage: 'Bandage', medkit: 'First-aid kit', veg: 'Garden vegetables' };
     const rows = Object.entries(S.items).filter(([, n]) => n > 0).map(([id, n]) => `<div class="meat-row"><span>${names[id]} <small>× ${n}</small></span><span class="acts"><button class="btn small primary" data-use="${id}">Use</button></span></div>`);
+    if (S.wood > 0) rows.push(`<div class="meat-row"><span>Firewood <small>× ${S.wood}</small></span><span class="acts"></span></div>`);
     const money = G.mode === 'survival' ? `<div class="meat-row"><span>Money</span><span class="st-money" style="font-size:16px">$${S.money}</span></div>` : '';
     return (rows.length || money ? '<h4>Supplies</h4>' : '') + rows.join('') + money;
   }
@@ -486,18 +492,35 @@ export class UI {
     $('cf-kicker').textContent = f.stove ? 'Wood stove' : 'Campfire';
     $('cf-douse').style.display = f.stove ? 'none' : '';
     if (f.stove) $('cf-fuel').textContent = 'The stove is lit and hot. Cook as much as you like.';
-    else $('cf-fuel').textContent = f.lit ? `The fire will burn for about ${mins >= 60 ? (mins / 60).toFixed(1) + ' more hours' : mins + ' more minutes'} (game time). Rain makes it burn down faster.` : 'The fire is out.';
+    else $('cf-fuel').textContent = f.lit ? `The fire will burn for about ${mins >= 60 ? (mins / 60).toFixed(1) + ' more hours' : mins + ' more minutes'} (game time). Rain makes it burn down faster. You carry ${G.survival.wood} firewood; each piece adds ${WOOD_HOURS} hours.` : 'The fire is out.';
+    const wb = $('cf-wood');
+    wb.style.display = f.stove ? 'none' : '';
+    wb.disabled = !f.lit || G.survival.wood <= 0 || f.fuel > MAX_FUEL - WOOD_HOURS;
+    wb.textContent = `Add firewood (${G.survival.wood})`;
     $('cf-meat').innerHTML = this.meatRows(true);
     $('cf-progress').classList.toggle('hidden', !this.cooking);
   }
 
   menuTick(dt) {
+    if (G.menuOpen === 'inspect' && this.skinning) {
+      const s = this.skinning;
+      s.t += dt;
+      if ((s.cut -= dt) <= 0) { s.cut = 0.45 + Math.random() * 0.35; G.audio?.slash(); }
+      $('in-meat').textContent = `${s.a.isBird ? 'Plucking' : 'Skinning'}… ${Math.round(Math.min(1, s.t / s.dur) * 100)}%`;
+      if (s.t >= s.dur) {
+        this.skinning = null;
+        s.a.skinned = true;
+        s.a.markSkinned?.();
+        this.toast(s.a.isBird ? `You pluck and clean the ${s.a.sp.name.toLowerCase()}. Now you can take the meat.` : `You skin and gut the ${s.a.sp.name.toLowerCase()}. Now you can cut the meat.`, 'good');
+        this.showInspect(s.a);
+      }
+    }
     if (G.menuOpen === 'campfire' && this.cooking) {
       const c = this.cooking;
       c.t += dt;
-      $('cf-progress-fill').style.width = `${Math.min(100, (c.t / 2.5) * 100)}%`;
+      $('cf-progress-fill').style.width = `${Math.min(100, (c.t / 0.8) * 100)}%`;
       $('cf-progress-text').textContent = `Cooking ${c.type.toLowerCase()} over the fire… (${c.left} left)`;
-      if (c.t >= 2.5) {
+      if (c.t >= 0.8) {
         if (!this.fire.lit) { this.cooking = null; this.toast('The fire went out.', 'warn'); this.renderCampfire(); return; }
         G.survival.cookPortion(c.type);
         c.left--;
@@ -583,6 +606,15 @@ export class UI {
     };
     $('pk-meat').addEventListener('click', meatClick);
     $('cf-meat').addEventListener('click', meatClick);
+    $('cf-wood').addEventListener('click', () => {
+      const f = this.fire, S = G.survival;
+      if (!f || !f.lit || f.stove || S.wood <= 0) return;
+      S.wood--;
+      f.fuel = Math.min(MAX_FUEL, f.fuel + WOOD_HOURS);
+      G.net?.fire(f);
+      G.audio?.strike();
+      this.renderCampfire();
+    });
     $('cf-douse').addEventListener('click', () => { if (this.fire) { this.fire.lit = false; this.fire.fuel = 0; this.cooking = null; this.toast('You put out the fire.', 'info'); this.resume(); } });
     $('sl-options').addEventListener('click', (e) => { const b = e.target.closest('[data-hours]'); if (b) this.startSleep(parseFloat(b.dataset.hours)); });
     $('sf-continue').addEventListener('click', () => this.endSleep());
@@ -1015,11 +1047,16 @@ export class UI {
     $('in-tag').textContent = a.tagged ? 'Tagged' : 'Tag & record';
     $('in-tag').disabled = a.tagged;
     const meatBtn = $('in-meat');
-    meatBtn.disabled = !sp.meat || a.meatTaken;
-    meatBtn.textContent = a.meatTaken ? 'Meat harvested' : sp.meat ? `Harvest ${sp.meat.toLowerCase()}` : 'Meat not eaten';
+    if (this.skinning && this.skinning.a !== a) this.skinning = null;
+    meatBtn.disabled = !sp.meat || a.meatTaken || !!this.skinning;
+    meatBtn.textContent = a.meatTaken ? 'Meat harvested' : !sp.meat ? 'Meat not eaten' : !a.skinned ? `${a.isBird ? 'Pluck' : 'Skin'} the ${sp.name.toLowerCase()}` : `Harvest ${sp.meat.toLowerCase()}`;
     const note = $('in-meat-note');
-    note.classList.toggle('hidden', !!sp.meat && !a.meatTaken);
-    note.innerHTML = a.meatTaken ? `You have taken the meat. Cook it on a campfire before eating.` : !sp.meat ? `The ${sp.name.toLowerCase()} is not normally hunted for food. You can still record and tag it.` : '';
+    const noteText = a.meatTaken ? 'You have taken the meat. Cook it on a campfire before eating.'
+      : !sp.meat ? `The ${sp.name.toLowerCase()} is not normally hunted for food. You can still record and tag it.`
+      : !a.skinned ? (a.isBird ? 'Before you can take the meat you have to pluck and clean the bird with your knife.' : 'Before you can take the meat you have to skin and gut the carcass with your knife. It takes a while on a big animal.')
+      : 'The carcass is skinned and gutted. Now cut the meat.';
+    note.classList.toggle('hidden', !noteText);
+    note.innerHTML = noteText;
   }
 
   trophyFor(a) {
@@ -1051,7 +1088,13 @@ export class UI {
 
   harvestMeat() {
     const a = this.inspected;
-    if (!a || !a.sp.meat || a.meatTaken) return;
+    if (!a || !a.sp.meat || a.meatTaken || this.skinning) return;
+    if (!a.skinned) {
+      // skinning takes longer the bigger the animal
+      this.skinning = { a, t: 0, cut: 0, dur: a.isBird ? 2.5 : clamp(3 + a.weight / 70, 3.5, 9) };
+      $('in-meat').disabled = true;
+      return;
+    }
     G.net?.tag(a, true);
     const yieldFrac = a.isBird ? 0.5 : 0.38;
     const available = a.weight * yieldFrac;

@@ -19,14 +19,25 @@ export const STATE_LABEL = {
 
 // Animals that may attack the player. 'hunt': predators that come for you; 'defend': animals
 // that attack when surprised at close range. dmg = health lost per hit, rate = seconds between hits.
+// nightHunt: a defensive animal that turns predator after dark (chance like a hunter's).
 const ATTACK = {
-  wolf:   { mode: 'hunt',   range: 45, dmg: [7, 12],  rate: 1.1, chance: 0.05, pack: true },
-  cougar: { mode: 'hunt',   range: 35, dmg: [14, 24], rate: 1.4, chance: 0.045 },
-  coyote: { mode: 'hunt',   range: 18, dmg: [4, 8],   rate: 1.0, chance: 0.015, pack: true },
-  bear:   { mode: 'defend', range: 14, dmg: [18, 30], rate: 1.6, chance: 0.45 },
-  boar:   { mode: 'defend', range: 10, dmg: [8, 15],  rate: 1.2, chance: 0.45 },
-  moose:  { mode: 'defend', range: 10, dmg: [10, 20], rate: 1.5, chance: 0.3 },
+  wolf:   { mode: 'hunt',   range: 55, dmg: [8, 14],  rate: 1.0, chance: 0.08, pack: true },
+  cougar: { mode: 'hunt',   range: 40, dmg: [15, 26], rate: 1.3, chance: 0.07 },
+  coyote: { mode: 'hunt',   range: 25, dmg: [5, 9],   rate: 1.0, chance: 0.03, pack: true },
+  bear:   { mode: 'defend', range: 20, dmg: [20, 32], rate: 1.5, chance: 0.65, nightHunt: 0.035 },
+  boar:   { mode: 'defend', range: 13, dmg: [9, 16],  rate: 1.1, chance: 0.6 },
+  moose:  { mode: 'defend', range: 12, dmg: [12, 22], rate: 1.4, chance: 0.4 },
+  bison:  { mode: 'defend', range: 10, dmg: [12, 24], rate: 1.6, chance: 0.3 },
 };
+// Predators that roam in greater numbers after dark
+const NIGHT_PREDATORS = ['wolf', 'cougar', 'coyote', 'bear'];
+// Most animals will not attack into the light of a lit campfire
+const FIRE_SAFE = 14;
+function nearFire(P) {
+  for (const f of G.world?.fires || []) if (f.lit && Math.hypot(f.x - P.pos.x, f.z - P.pos.z) < FIRE_SAFE) return true;
+  return false;
+}
+let skinnedMat = null, bloodGeo = null, bloodMat = null;
 const _eyeA = new THREE.Vector3(), _dirA = new THREE.Vector3();
 const BAIT_EATERS = ['deer', 'elk', 'moose', 'boar', 'bear', 'bison', 'pronghorn', 'bighorn', 'rabbit'];
 
@@ -143,6 +154,7 @@ class Animal {
     this.age = Math.max(1, Math.round(1 + Math.random() * (st.ageMax - 1) * (0.4 + k * 0.6)));
     this.weight = wr[0] + (wr[1] - wr[0]) * Math.min(1, k * 0.7 + Math.random() * 0.3);
     this.tagged = false; this.harvest = null; this.popupShown = false;
+    this.skinned = false; this.meatTaken = false;
     this.prey = null;
     const r = this.rig;
     r.root.scale.setScalar(this.scale);
@@ -159,6 +171,7 @@ class Animal {
     this.active = false;
     this.m.scene.remove(this.rig.root);
     if (this.fadeMat) { this.fadeMat.dispose(); this.fadeMat = null; }
+    if (this.blood) { this.m.scene.remove(this.blood); this.blood = null; }
   }
 
   get label() { return this.sp.sex[this.male ? 0 : 1]; }
@@ -168,6 +181,7 @@ class Animal {
 
   setState(s, dur = Infinity) {
     this.state = s;
+    this.stalking = false;
     this.stateT = 0;
     this.stateDur = dur;
   }
@@ -292,6 +306,8 @@ class Animal {
     const d = Math.hypot(dx, dz);
     this.playerDist = d;
     if (G.sandbox.observerMode || d > 320) { this.awareness = Math.max(0, this.awareness - tdt * 0.1); return; }
+    // lying still in the grass you cannot be seen, heard or winded unless something walks right onto you
+    if (P.hidden && d > 2.5) { this.awareness = Math.max(0, this.awareness - tdt * 0.12); return; }
     let score = 0;
     const ang = Math.abs(angleDiff(this.heading + this.headYaw, Math.atan2(dx, dz)));
     const headDown = this.state === S.GRAZE && this.headPitch > 0.5 ? 0.45 : 1;
@@ -351,6 +367,7 @@ class Animal {
     this.energy = clamp(this.energy + (this.state === S.REST ? tdt / 60 : -tdt / 400), 0, 1);
     this.cooldown -= tdt;
     if (this.state !== S.ATTACK && this.tryAttack(tdt)) return;
+    if (this.nightStalk(tdt)) return;
     const st = this.state;
     const d = this.playerDist;
 
@@ -503,7 +520,7 @@ class Animal {
         const dt = Math.hypot(this.target.x - this.pos.x, this.target.z - this.pos.z);
         this.desired = Math.atan2(this.target.x - this.pos.x, this.target.z - this.pos.z);
         const lag = L && L !== this ? Math.hypot(L.pos.x - this.pos.x, L.pos.z - this.pos.z) : 0;
-        this.targetSpeed = lag > 25 ? b.trot : b.walk;
+        this.targetSpeed = lag > 25 || this.stalking ? b.trot : b.walk;
         if (dt < 2 || this.stateT > this.stateDur) this.pickActivity();
         break;
       }
@@ -645,7 +662,7 @@ class Animal {
     if (this.fadeAt) {
       const fadeStart = this.fadeAt;
       if (!this.fadeMat) {
-        this.fadeMat = animalMaterial.clone();
+        this.fadeMat = (this.skinned ? skinnedMat : animalMaterial).clone();
         this.fadeMat.transparent = true;
         r.meshes.forEach((me) => { me.material = this.fadeMat; me.castShadow = false; });
       }
@@ -664,14 +681,20 @@ class Animal {
     if (this.state === S.DOWN || this.state === S.FLEE) return false;
     this.atkCooldown = (this.atkCooldown || 0) - tdt;
     const d = this.playerDist;
-    if (d > A.range || this.atkCooldown > 0) return false;
-    const aggr = G.cfg.predator;
-    if (A.mode === 'hunt') {
-      if (this.awareness < 0.2 && d > A.range * 0.5) return false;
-      const night = G.env.isNight() ? 1.8 : 1;
+    if (P.hidden && d > 3) return false;
+    const night = G.env.isNight();
+    const hunts = A.mode === 'hunt' || (night && A.nightHunt);
+    // hunters range much further after dark
+    const range = A.range * (night && hunts ? 1.6 : 1);
+    if (d > range || this.atkCooldown > 0) return false;
+    const aggr = G.cfg.predator * (nearFire(P) ? 0.12 : 1);
+    if (hunts) {
+      // by day a hunter has to have noticed you; at night it follows your scent
+      if (!night && this.awareness < 0.2 && d > range * 0.5) return false;
       const pack = A.pack && this.group ? 1 + this.group.members.length * 0.3 : 1;
-      if (Math.random() < A.chance * aggr * night * pack * tdt) { this.startAttack(true); return true; }
-      return false;
+      const chance = (A.mode === 'hunt' ? A.chance : A.nightHunt) * (night ? 3 : 1);
+      if (Math.random() < chance * aggr * pack * tdt) { this.startAttack(true); return true; }
+      if (A.mode === 'hunt') return false;
     }
     // defensive animals strike when you get too close
     if (this.awareness >= 0.6 || d < A.range * 0.6) {
@@ -679,6 +702,45 @@ class Animal {
       this.atkCooldown = 6;
     }
     return false;
+  }
+
+  // After dark, predators (and the odd bear) pick up your scent and close in, unless you are by a
+  // lit campfire, indoors or lying hidden in the grass.
+  nightStalk(tdt) {
+    const A = ATTACK[this.species];
+    if (!A || !(A.mode === 'hunt' || A.nightHunt) || !G.cfg || !G.started || G.sandbox.observerMode || !G.env.isNight()) return false;
+    const st = this.state;
+    if (st !== S.WANDER && st !== S.IDLE && st !== S.REST && st !== S.GRAZE) return false;
+    this.stalkT = (this.stalkT || 0) - tdt;
+    if (this.stalkT > 0) return false;
+    this.stalkT = 6 + Math.random() * 6;
+    const P = this.P || G.player, d = this.playerDist;
+    if (d > 240 || d < 8 || isDead(P) || P.inBed || P.inCabinSafe || P.hidden || nearFire(P)) return false;
+    if (Math.random() > 0.6 * G.cfg.predator) return false;
+    this.target.x = P.pos.x + (Math.random() - 0.5) * 12;
+    this.target.z = P.pos.z + (Math.random() - 0.5) * 12;
+    this.setState(S.WANDER, 30);
+    this.stalking = true;
+    return true;
+  }
+
+  // Skinned carcass: raw red flesh and a pool of blood on the ground
+  markSkinned() {
+    this.skinned = true;
+    if (!skinnedMat) {
+      skinnedMat = animalMaterial.clone();
+      skinnedMat.color.setRGB(0.78, 0.3, 0.26);
+      bloodGeo = new THREE.CircleGeometry(1, 16);
+      bloodGeo.rotateX(-Math.PI / 2);
+      bloodMat = new THREE.MeshLambertMaterial({ color: 0x3e0806, transparent: true, opacity: 0.88, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    }
+    if (!this.fadeMat) this.rig.meshes.forEach((me) => { me.material = skinnedMat; });
+    const s = this.sp.model.bodyLen * this.scale * 0.6;
+    this.blood = new THREE.Mesh(bloodGeo, bloodMat);
+    this.blood.position.set(this.pos.x, this.m.T.getHeight(this.pos.x, this.pos.z) + 0.03, this.pos.z);
+    this.blood.scale.set(s * 0.8, 1, s);
+    this.blood.rotation.y = this.heading;
+    this.m.scene.add(this.blood);
   }
 
   startAttack(announce) {
@@ -708,7 +770,8 @@ class Animal {
     this.desired = Math.atan2(dx, dz);
     this.targetSpeed = d > 1.6 ? this.b.run * 0.9 : 0;
     this.atkCool -= tdt;
-    if (this.stateT > this.stateDur || d > 90 || G.sandbox.observerMode || P.inBed || P.inCabinSafe || isDead(P)) { this.endAttack(); return; }
+    // animals fear fire: reach a lit campfire and an attacker backs off
+    if (this.stateT > this.stateDur || d > 90 || G.sandbox.observerMode || P.inBed || P.inCabinSafe || isDead(P) || (nearFire(P) && this.stateT > 1.5)) { this.endAttack(); return; }
     if (d < 2.4 && this.atkCool <= 0) {
       // walls and shut doors protect you
       _eyeA.set(this.pos.x, this.pos.y + this.sp.model.shoulderH * 0.8, this.pos.z);
@@ -717,12 +780,12 @@ class Animal {
       _dirA.divideScalar(dist);
       const blocked = G.world.raycastStatic(_eyeA, _dirA, dist) >= 0;
       if (!blocked) {
-        const dmg = (A.dmg[0] + Math.random() * (A.dmg[1] - A.dmg[0])) * G.cfg.predDmg;
+        const dmg = (A.dmg[0] + Math.random() * (A.dmg[1] - A.dmg[0])) * G.cfg.predDmg * (G.env.isNight() ? 1.25 : 1);
         if (P === G.player) G.survival?.damage(dmg, this.pos, `Killed by a ${this.sp.name.toLowerCase()}`);
         else G.net?.damage(P, dmg, `Killed by a ${this.sp.name.toLowerCase()}`, this.pos);
         this.lunge = 0.45;
         G.audio?.growl(this.pos, this.species);
-        if (A.mode === 'defend' && Math.random() < 0.35) { this.endAttack(); return; }
+        if (A.mode === 'defend' && Math.random() < 0.25) { this.endAttack(); return; }
       }
       this.atkCool = A.rate * (0.8 + Math.random() * 0.4);
     }
@@ -1222,9 +1285,11 @@ export class AnimalManager {
       this.popTimer = 3;
       for (const id of SPECIES_ORDER) {
         const c = this.count(id);
-        const target = this.population[id];
+        // more predators roam after dark, and closer by
+        const nightPred = G.env.isNight() && NIGHT_PREDATORS.includes(id);
+        const target = nightPred ? Math.ceil(this.population[id] * 2) : this.population[id];
         if (c < target) {
-          const p = this.findSpawnPoint(id, 110);
+          const p = nightPred ? this.findSpawnPoint(id, 90, 260) : this.findSpawnPoint(id, 110);
           if (p) {
             const sp = SPECIES[id];
             const n = Math.min(target - c, sp.behavior.herd[0] + Math.floor(Math.random() * (sp.behavior.herd[1] - sp.behavior.herd[0] + 1)));

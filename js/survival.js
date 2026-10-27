@@ -7,6 +7,8 @@ import { FORAGE } from './forage.js';
 
 export const CARRY_KG = 20;
 export const PORTION_KG = 0.5;
+// Firewood: chop trees for it; a campfire takes FIRE_WOOD pieces to light and each piece burns WOOD_HOURS
+export const FIRE_WOOD = 2, WOOD_HOURS = 1.5, MAX_WOOD = 12, WOOD_PER_TREE = 4, MAX_FUEL = 10;
 
 export class Survival {
   constructor() {
@@ -20,6 +22,7 @@ export class Survival {
     this.forage = {};       // forage type -> count
     this.known = new Set(); // forage types the player has identified by eating them
     this.items = { beans: 0, bandage: 0, medkit: 0 };
+    this.wood = 0;          // pieces of firewood carried
     this.money = 0;
     this.warned = {};
     this.lastHurt = 0;

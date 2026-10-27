@@ -42,6 +42,7 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers â€
 | W A S D / Mouse | Move / look |
 | Shift | Sprint (hold breath while scoped, which steadies the aim) |
 | C (or Left Ctrl) | Toggle crouch (quieter, harder to see). Careful: Ctrl+W closes the browser tab; the game asks before leaving |
+| Z | Lie down flat (crawl slowly). Lying still in the grass, off the trails, makes you invisible to wildlife |
 | Space | Jump |
 | 1â€“8 | Rifle, shotgun, revolver, bow, knife, binoculars, bait, grunt call |
 | Right mouse | Aim the scope or raise the binoculars |
@@ -49,7 +50,8 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers â€
 | Mouse wheel | Switch items (optic zoom while aiming: scope 3â€“9Ã—, binoculars 4â€“12Ã—) |
 | R | Reload |
 | E | Inspect tracks or a harvest; open/close cabin doors; use the bed (relax or sleep); light and use campfires; climb the stand ladder |
-| Z | While lying in bed: go to sleep |
+| Z (in bed) | Go to sleep |
+| Hold E (at a tree) | Chop the tree down for firewood |
 | T | Tracking mode (highlights fresh sign) |
 | F / J / M / B | Field Guide / Journal / Map / Sandbox |
 | I | Pack: health, food, rest, meat, wild food and supplies |
@@ -60,7 +62,7 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers â€
 
 - **Game modes:** Free roam (explore freely, everything at the stores is free, sandbox available) or **Survival mode** on Easy, Medium or Hard. Survival starts with only a hunting knife and a little money ($150 / $100 / $60). Difficulty changes hunger speed, predator aggression and damage, the number and accuracy of poachers, poison strength, and store prices. No sandbox or fast travel in survival.
 - **Death:** when health reaches zero you die (killed by a predator, shot by a poacher, starvation, exhaustion or poisoning). The game then starts over from zero: journal, money and gear are wiped.
-- **Predators fight back:** wolves (in packs) and cougars may hunt you, especially at night; bears, boars and moose attack if surprised at close range; coyotes rarely. Shoot them, strike them with the knife, or get indoors and shut the door.
+- **Predators fight back:** wolves (in packs), cougars and coyotes hunt you; bears, boars, moose and bison attack if you get too close. **Nights are deadly:** twice as many predators roam after dark, they follow your scent from far away and close in, they hit harder, and bears turn predator too. A lit campfire keeps them at bay (an attacker backs off when you reach one), and so does getting indoors and shutting the door or lying still in the grass. Otherwise shoot them or strike them with the knife.
 - **Knife:** key 5. Click to strike at close range. It brings down small animals and birds (wolves too), drives off big ones, and disarms poachers.
 - **Town:** a small town on flat ground east of the cabin, with three real, enterable buildings: a **gunsmith**, a **butcher** and a **general store**, each with a sign, a shingled roof, a striped (or tin) awning, wall lanterns, porch barrels, crates and a bench, a hitching rail, a counter and a shopkeeper. Shopkeepers are full characters in work aprons who lean on the counter and turn to look at you when you come in. The gunsmith sells the rifle, shotgun, revolver, recurve bow, binoculars, ammunition and arrows (the only place to restock). The butcher buys your meat (more for cooked). The general store sells deer corn bait, a grunt call, canned beans, bandages and first-aid kits, which also treat poisoning. You can also pick up a rifle dropped by a poacher.
 - **Weapons:** bolt-action rifle (scoped, any game); pump shotgun (9-pellet spread for birds and small game within 40 m, reloads shell by shell); .357 revolver (fast, short range; only vital shots stop deer-sized game); recurve bow (silent: hold to draw, sight zeroed at 20 m, arrows drop and stick where they land and can be picked up with E). Small calibres cannot cleanly take the largest game.
@@ -77,7 +79,8 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers â€
 - **Foraging:** berries, mushrooms, wild fruit, roots and cattails grow around the map. You only see a description ("Shiny black berries") until you eat one â€” some are deadly look-alikes such as deadly nightshade, death cap, jack-o'-lantern mushroom and poison hemlock. Death caps act hours later.
 - **Cabins and sleep:** the starting cabin and a small meadow hut east of the river are fully enterable, with a bed, table and lantern, shelves, a rug and (in the big cabin) a wood stove. Doors open and close with E (a shut door blocks bullets and poachers' line of sight). At the bed, press E to lie down and relax (rest recovers slowly, time passes normally; E to get up) or to sleep for 2, 4 or 8 hours, or until dawn, dusk or midday. The forest keeps living while you sleep.
 - **Survival:** Health, Food and Rest bars. Food and rest drain over time (faster when sprinting); at zero you lose health. Low rest makes your view drift and slows you down. Raw meat can cause food sickness. If health reaches zero you wake up in the cabin six hours later. Survival can be turned off in the Sandbox.
-- **Meat and campfires:** inspect a harvested game animal and choose Harvest meat (you can carry 20 kg). At a campfire, hold E to light it; it burns for about five game hours (faster in rain). Press E at a lit fire to cook meat in 0.5 kg portions and eat. Press I to open your pack and eat anywhere.
+- **Skinning and meat:** inspect a harvested game animal and skin it first (pluck a bird); bigger animals take longer, and the carcass is left red and raw in a pool of blood. Then cut the meat (you can carry 20 kg).
+- **Firewood and campfires:** walk up to a tree and hold E to chop it down. It creaks, topples away from you and leaves a stump, and gives 4 firewood (carry up to 12). The chopping is loud, so animals nearby hear it. A campfire takes 2 firewood to light and burns 3 game hours (faster in rain); each extra piece added at the fire burns another 1.5 hours. Cooking is quick, under a second per 0.5 kg portion. Press I to open your pack and eat anywhere.
 - **Poachers:** armed poachers patrol the woods, investigate gunshots and shoot at you on sight. Break line of sight with trees, rocks or a cabin. Hit one and they drop their rifle and flee. They can be turned off in the Sandbox.
 - **Minimap:** a north-up minimap in the top-left shows terrain, trails, cabins, campfires (lit ones glow) and poachers shooting at you. Click it, or press M, for the full map.
 - **Main menu:** start or resume the hunt, open your Hunting Journal (with stats and latest entries on the menu itself), the Field Guide, settings and controls.

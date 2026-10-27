@@ -229,11 +229,11 @@
       <div class="menu-head"><h2>Controls</h2><button class="btn ghost close" data-action="back">✕</button></div>
       <div class="keys">
           <span><kbd>W A S D</kbd>Move</span><span><kbd>Mouse</kbd>Look</span>
-          <span><kbd>Shift</kbd>Sprint / hold breath</span><span><kbd>C</kbd>Crouch</span>
+          <span><kbd>Shift</kbd>Sprint / hold breath</span><span><kbd>C</kbd>Crouch</span><span><kbd>Z</kbd>Lie down · hidden when still in the grass</span>
           <span><kbd>Space</kbd>Jump</span><span><kbd>1–8</kbd>Rifle · shotgun · revolver · bow · knife · binoculars · bait · call</span>
           <span><kbd>RMB</kbd>Aim / scope / raise binoculars</span><span><kbd>LMB</kbd>Fire · hold to draw the bow · place bait · call</span>
           <span><kbd>Wheel</kbd>Switch item · zoom while aiming</span><span><kbd>R</kbd>Reload</span>
-          <span><kbd>E</kbd>Inspect tracks or a harvest · ladder · sleep at a cabin door</span><span><kbd>T</kbd>Tracking mode</span>
+          <span><kbd>E</kbd>Inspect tracks or a harvest · ladder · sleep at a cabin door</span><span><kbd>Hold E</kbd>Chop down a tree for firewood</span><span><kbd>T</kbd>Tracking mode</span>
           <span><kbd>F</kbd>Field Guide</span><span><kbd>J</kbd>Journal</span>
           <span><kbd>M</kbd>Map</span><span><kbd>B</kbd>Sandbox</span>
           <span><kbd>I</kbd>Pack: food &amp; health</span><span><kbd>H</kbd>Hide HUD</span><span><kbd>Esc</kbd>Pause</span>
@@ -281,6 +281,7 @@
       <div class="cook-bar hidden" id="cf-progress"><span id="cf-progress-text">Cooking…</span><div class="load-bar"><i id="cf-progress-fill"></i></div></div>
       <div class="meat-list" id="cf-meat"></div>
       <div class="menu-foot hv-actions">
+        <button class="btn small" id="cf-wood">Add firewood</button>
         <button class="btn small" id="cf-douse">Put out the fire</button>
         <button class="btn" data-action="back">Done</button>
       </div>

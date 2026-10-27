@@ -111,6 +111,8 @@ export class Player {
     this.pitch = -0.02;
     this.eyeH = 1.7;
     this.crouch = false;
+    this.prone = false;     // lying flat on your belly
+    this.hidden = false;    // prone and still in the grass: invisible to wildlife
     this.onGround = true;
     this.stamina = 1;
     this.staminaDelay = 0;
@@ -148,7 +150,9 @@ export class Player {
 
     if (this.inBed) { this.updateInBed(dt); return; }
 
-    if (input.wasPressed('KeyC') || input.wasPressed('ControlLeft')) this.crouch = !this.crouch;
+    if (input.wasPressed('KeyC') || input.wasPressed('ControlLeft')) { this.crouch = this.prone || !this.crouch; this.prone = false; }
+    // Z: lie flat in the grass; keep still and nothing can see you
+    if (input.wasPressed('KeyZ')) { this.prone = !this.prone; this.crouch = false; }
 
     // Wish direction
     let fx = 0, fz = 0;
@@ -172,12 +176,13 @@ export class Player {
     const onPlatform = this.world.groundAt(this.pos.x, this.pos.z, this.pos.y) > h + 0.05;
     if (!onPlatform && -h > SWIM_DEPTH) this.swimming = true;
     else if (-h < SWIM_DEPTH - 0.15 || onPlatform) this.swimming = false;
-    this.sprinting = !ads && !wantAim && !this.swimming && wantSprint && len > 0 && fz > 0 && this.stamina > 0.05 && this.onGround;
+    this.sprinting = !ads && !wantAim && !this.swimming && !this.prone && wantSprint && len > 0 && fz > 0 && this.stamina > 0.05 && this.onGround;
     if ((this.sprinting || this.swimming) && this.crouch) this.crouch = false;
     if (this.crouch && h < -0.6) this.crouch = false; // keep head above water
+    if (this.prone && (this.swimming || h < -0.2)) this.prone = false;
 
     this.inWater = h < -0.25;
-    let speed = this.crouch ? 1.5 : this.sprinting ? 6.8 : 3.3;
+    let speed = this.prone ? 0.75 : this.crouch ? 1.5 : this.sprinting ? 6.8 : 3.3;
     if (ads) speed *= 0.5;
     if (this.tired) speed *= 1 - this.tired * 0.25;
     if (this.swimming) {
@@ -193,7 +198,8 @@ export class Player {
 
     // Jump & gravity
     if (input.wasPressed('Space') && this.onGround && !this.inWater && !this.swimming) {
-      if (this.crouch) this.crouch = false;
+      if (this.prone) { this.prone = false; this.crouch = true; }
+      else if (this.crouch) this.crouch = false;
       else if (this.stamina > 0.1) { this.vel.y = 6.2; this.onGround = false; this.stamina -= 0.08; this.noiseSpike = 0.5; }
     }
     this.vel.y -= 20 * dt;
@@ -248,26 +254,28 @@ export class Player {
 
     // Noise & visibility used by animal perception
     let n = 0;
-    if (this.moving) n = this.sprinting ? 1.0 : this.crouch ? 0.1 : 0.42;
+    if (this.moving) n = this.sprinting ? 1.0 : this.prone ? 0.04 : this.crouch ? 0.1 : 0.42;
     if (this.inWater && this.moving) n = Math.min(1, n * 1.6 + 0.15);
     if (this.swimming) n = this.moving ? 0.55 : 0.15;
     this.noiseSpike = Math.max(0, this.noiseSpike - dt * 1.5);
     this.noise = Math.max(n, this.noiseSpike);
-    let v = this.swimming ? 0.55 : this.crouch ? 0.45 : 0.85;
-    if (this.moving) v += this.sprinting ? 0.3 : 0.12;
+    let v = this.swimming ? 0.55 : this.prone ? 0.18 : this.crouch ? 0.45 : 0.85;
+    if (this.moving) v += this.sprinting ? 0.3 : this.prone ? 0.04 : 0.12;
     if (this.pos.y > this.world.terrain.getHeight(this.pos.x, this.pos.z) + 2) v *= 0.6; // elevated stands break outline
-    this.visibility = clamp(v, 0.1, 1);
+    // lying still in the grass (off the trails, out of the water) you vanish completely
+    this.hidden = this.prone && !this.moving && !this.inWater && hT > 0.3 && this.world.terrain.trailAt(this.pos.x, this.pos.z) > 2;
+    this.visibility = this.hidden ? 0.02 : clamp(v, 0.1, 1);
 
     // Eye height, head bob and footsteps
-    this.eyeH = damp(this.eyeH, this.crouch ? 1.05 : 1.7, 10, dt);
+    this.eyeH = damp(this.eyeH, this.prone ? 0.42 : this.crouch ? 1.05 : 1.7, this.prone ? 6 : 10, dt);
     const bobTarget = this.onGround && this.moving && !this.swimming ? Math.min(1, this.speed2d / 3.3) : 0;
     this.bobAmt = damp(this.bobAmt, bobTarget, 8, dt);
-    this.bobT += dt * (this.sprinting ? 11 : this.crouch ? 5 : 7.5) * (this.moving ? 1 : 0);
+    this.bobT += dt * (this.sprinting ? 11 : this.prone ? 3.5 : this.crouch ? 5 : 7.5) * (this.moving ? 1 : 0);
     const stepPhase = Math.floor(this.bobT / Math.PI);
     if (stepPhase !== this.lastStep && this.onGround && this.moving) {
       this.lastStep = stepPhase;
       if (this.swimming) { if (stepPhase % 2 === 0) G.audio?.footstep(1, true); }
-      else G.audio?.footstep(this.sprinting ? 1 : this.crouch ? 0.3 : 0.6, this.inWater);
+      else G.audio?.footstep(this.sprinting ? 1 : this.prone ? 0.12 : this.crouch ? 0.3 : 0.6, this.inWater);
     }
 
     this.recoil = damp(this.recoil, 0, 9, dt);
@@ -280,7 +288,7 @@ export class Player {
 
     // Weapon sway when aiming (steadier crouched, much steadier holding breath)
     const t = performance.now() / 1000;
-    let swayAmt = ads ? (this.crouch ? 0.0016 : 0.003) : 0;
+    let swayAmt = ads ? (this.prone ? 0.0007 : this.crouch ? 0.0016 : 0.003) : 0;
     if (ads && this.moving) swayAmt *= 2.5;
     if (this.holdBreath) swayAmt *= 0.15;
     if (ads && this.stamina < 0.05 && !this.holdBreath) swayAmt *= 1.8;
@@ -301,6 +309,7 @@ export class Player {
     this.pitch = 0.08;
     this.vel.set(0, 0, 0);
     this.crouch = false;
+    this.prone = false;
     this.sprinting = false;
   }
 

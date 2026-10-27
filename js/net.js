@@ -86,7 +86,7 @@ class RemotePlayer {
     this.target.set(m.x, m.y, m.z);
     if (!this.seen) { this.pos.copy(this.target); this.seen = true; }
     this.yaw = m.yaw; this.pitch = m.p || 0; this.aim = m.a || 0; this.draw = m.d || 0; this.tier = m.r || 0;
-    this.crouch = !!m.c; this.item = m.it; this.hp = m.hp;
+    this.crouch = !!m.c; this.hidden = !!m.hd; this.item = m.it; this.hp = m.hp;
     this.dead = !!m.dead; this.moving = !!m.mv; this.visibility = m.vis; this.noise = m.no;
     this.inBed = !!m.bed; this.inCabinSafe = !!m.safe; this.swimming = !!m.sw;
   }
@@ -254,7 +254,7 @@ export class Net {
     if (this.meT <= 0) {
       this.meT = 1 / 15;
       this.send({
-        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch ? 1 : 0,
+        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch || P.prone ? 1 : 0, hd: P.hidden ? 1 : 0,
         a: Math.round(G.equipment.aim * 10) / 10, d: G.equipment.item === 'bow' ? Math.round((G.equipment.draw || 0) * 10) / 10 : 0, r: G.equipment.tier(G.equipment.item),
         it: G.equipment.item, hp: Math.round(S.health), dead: S.dead ? 1 : 0, mv: P.moving ? 1 : 0,
         vis: r2(P.visibility || 0.5), no: r2(P.noise || 0), bed: P.inBed ? 1 : 0, safe: P.inCabinSafe ? 1 : 0, sw: P.swimming ? 1 : 0,

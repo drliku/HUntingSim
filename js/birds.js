@@ -46,6 +46,7 @@ class Bird {
     this.callT = rnd(8, 40);
     this.printAcc = 0;
     this.tagged = false; this.harvest = null; this.popupShown = false; this.fadeAt = 0; this.fadeMat = null;
+    this.skinned = false; this.meatTaken = false;
     const st = this.sp.stats;
     const wr = this.male ? st.wM : st.wF;
     this.weight = rnd(wr[0], wr[1]);

@@ -11,7 +11,7 @@ import { Equipment } from './equipment.js';
 import { AudioSystem } from './audio.js';
 import { UI } from './ui.js';
 import { BirdManager } from './birds.js';
-import { Survival } from './survival.js';
+import { Survival, FIRE_WOOD, WOOD_HOURS, MAX_WOOD, WOOD_PER_TREE } from './survival.js';
 import { PoacherManager } from './poachers.js';
 import { ForageManager } from './forage.js';
 import { DIFFICULTY, FREE_ROAM, STORES } from './modes.js';
@@ -217,7 +217,7 @@ async function boot() {
   }
   // Back into the forest after dying in PvP: knife, a little cash, somewhere away from the others
   G.pvpRespawn = () => {
-    Object.assign(survival, { health: 100, food: 75, rest: 80, sick: 0, poisons: [], raw: {}, cooked: {}, forage: {}, items: { beans: 0, bandage: 0, medkit: 0 }, dead: false, cause: '', dizzy: 0 });
+    Object.assign(survival, { health: 100, food: 75, rest: 80, sick: 0, poisons: [], raw: {}, cooked: {}, forage: {}, items: { beans: 0, bandage: 0, medkit: 0 }, wood: 0, dead: false, cause: '', dizzy: 0 });
     survival.money = Math.max(survival.money, 40);
     equipment.owned = { rifle: false, shotgun: false, pistol: false, bow: false, knife: true, binoculars: false, bait: false, call: false };
     equipment.item = 'knife'; equipment.nextItem = null; equipment.reloadT = 0; equipment.draw = 0;
@@ -275,7 +275,7 @@ async function boot() {
   let renderOnce = true;
   let interactT = 0;
   let interaction = null;
-  let lightProg = 0;
+  let lightProg = 0, chopT = 0;
   let forageT = 5;
   let lastStore = null;
   const dirV = new THREE.Vector3();
@@ -324,8 +324,9 @@ async function boot() {
     }
     for (const fire of world.fires) {
       if (Math.hypot(P.pos.x - fire.x, P.pos.z - fire.z) < 2.4) {
-        if (fire.lit) interaction = { kind: 'fire', fire, text: '<kbd>E</kbd>Cook and eat at the campfire' };
-        else interaction = { kind: 'fire-unlit', fire, text: '<kbd>E</kbd>Hold to light the campfire' };
+        if (fire.lit) interaction = { kind: 'fire', fire, text: '<kbd>E</kbd>Cook at the campfire · add firewood' };
+        else if (survival.wood >= FIRE_WOOD) interaction = { kind: 'fire-unlit', fire, text: `<kbd>E</kbd>Hold to light the campfire (uses ${FIRE_WOOD} of your ${survival.wood} firewood)` };
+        else interaction = { kind: 'none', text: `You need ${FIRE_WOOD} firewood to light a fire (you have ${survival.wood}). Walk up to a tree and hold <kbd>E</kbd> to chop it down.` };
         return;
       }
     }
@@ -334,6 +335,10 @@ async function boot() {
       if (dBase < 1.8 && P.pos.y < l.baseY + 1.5) { interaction = { kind: 'ladder-up', l, text: '<kbd>E</kbd>Climb into the hunting stand' }; return; }
       const dTop = Math.hypot(P.pos.x - l.topX, P.pos.z - l.topZ);
       if (dTop < 1.3 && P.pos.y > l.topY - 0.3) { interaction = { kind: 'ladder-down', l, text: '<kbd>E</kbd>Climb down' }; return; }
+    }
+    if (!interaction && !P.prone && survival.wood < MAX_WOOD) {
+      const tree = world.veg.nearestTree(P.pos.x, P.pos.z, 1.3, P.yaw);
+      if (tree) { interaction = { kind: 'chop', tree, text: '<kbd>E</kbd>Hold to chop down the tree for firewood' }; return; }
     }
     if (equipment.aim > 0.3) return;
     camera.getWorldDirection(dirV);
@@ -355,7 +360,7 @@ async function boot() {
     if (interaction.kind === 'ladder-up') {
       const l = interaction.l;
       P.teleport(l.topX, l.topZ, l.topY);
-      P.crouch = false;
+      P.crouch = false; P.prone = false;
       ui.toast('In the stand: your scent and outline carry less from up here.', 'info');
     } else if (interaction.kind === 'ladder-down') {
       const l = interaction.l;
@@ -499,17 +504,33 @@ async function boot() {
           if (Math.random() < dt * 4) audio.strike();
           if (lightProg >= 1) {
             const fire = interaction.fire;
-            fire.lit = true; fire.fuel = 5;
+            fire.lit = true; fire.fuel = FIRE_WOOD * WOOD_HOURS;
+            survival.wood -= FIRE_WOOD;
             G.net?.fire(fire);
             lightProg = 0;
-            ui.toast('The campfire catches. It will burn for about five hours (game time). Press E at the fire to cook.', 'good');
+            ui.toast(`The campfire catches. It will burn for about ${FIRE_WOOD * WOOD_HOURS} hours (game time); each extra piece of firewood adds ${WOOD_HOURS}. Press E at the fire to cook.`, 'good');
             interactT = 0;
           }
         } else lightProg = 0;
+      } else if (interaction && interaction.kind === 'chop') {
+        if (input.isDown('KeyE')) {
+          // each swing of the hatchet is loud: animals nearby will hear it
+          if ((chopT -= dt) <= 0) { chopT = 0.6; audio.chop(); player.shake = Math.max(player.shake, 0.3); player.noiseSpike = 0.8; }
+          lightProg += dt / 5;
+          if (lightProg >= 1) {
+            const got = Math.min(WOOD_PER_TREE, MAX_WOOD - survival.wood);
+            survival.wood += got;
+            world.veg.fellTree(interaction.tree, player.pos.x, player.pos.z);
+            audio.treeFall();
+            ui.toast(G.choppedOnce ? `Timber! +${got} firewood (${survival.wood} carried).` : `Timber! The tree comes down and you split ${got} pieces of firewood (${survival.wood} carried, up to ${MAX_WOOD}). ${FIRE_WOOD} pieces light a campfire; add more at the fire to keep it burning.`, 'good');
+            G.choppedOnce = true;
+            lightProg = 0; chopT = 0; interaction = null; interactT = 0;
+          }
+        } else { lightProg = 0; chopT = 0; }
       } else lightProg = 0;
       const promptText = interaction ? interaction.text + (lightProg > 0 ? `<span class="hold"><i style="width:${Math.round(lightProg * 100)}%"></i></span>` : '') : null;
       ui.setPrompt(promptText);
-      if (input.wasPressed('KeyE') && interaction && interaction.kind !== 'fire-unlit') doInteraction();
+      if (input.wasPressed('KeyE') && interaction && interaction.kind !== 'fire-unlit' && interaction.kind !== 'chop') doInteraction();
       world.update(dt, camera.position);
       ambient.update(dt, camera.position, world.env, 1, world.veg);
       if (G.net && !G.net.isHost) animals.netUpdate(dt); else animals.update(dt);

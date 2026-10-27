@@ -466,7 +466,7 @@ export class Vegetation {
         const s = 0.75 + rng() * 0.65;
         bucket(type, px, pz).push({ x: px, y: h - 0.1, z: pz, s, r: rng() * Math.PI * 2 });
         const trunkR = (type === 'broad' ? 0.3 : type === 'pine' ? 0.24 : 0.15) * s + 0.08;
-        this.addToHash({ x: px, z: pz, r: trunkR, h: (type === 'pine' ? 5 : 4) * s, kind: 'tree' });
+        this.addToHash({ x: px, z: pz, r: trunkR, h: (type === 'pine' ? 5 : 4) * s, kind: 'tree', type, s });
       }
     }
 
@@ -644,12 +644,86 @@ export class Vegetation {
     for (const [k, arr] of this.bushHash) this.bushHash.set(k, arr.filter((b) => Math.hypot(b.x - x, b.z - z) >= r));
   }
 
+  // The tree trunk within reach in front of you (for chopping)
+  nearestTree(x, z, reach, yaw) {
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    let best = null, bd = reach;
+    this.forEachNear(x, z, reach + 1, (it) => {
+      if (it.kind !== 'tree') return;
+      const dx = it.x - x, dz = it.z - z, dc = Math.hypot(dx, dz), d = dc - it.r;
+      if (d < bd && (dx * fx + dz * fz) / Math.max(dc, 1e-3) > 0.35) { bd = d; best = it; }
+    });
+    return best;
+  }
+
+  // Fell a tree: it topples away from the woodcutter and stays where it lands, leaving a stump
+  fellTree(it, fromX, fromZ) {
+    const m4 = new THREE.Matrix4(), p = new THREE.Vector3(), zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    let src = null;
+    for (const c of this.chunks) {
+      if (c.type !== it.type || Math.abs(c.x - it.x) > CHUNK / 2 + 0.5 || Math.abs(c.z - it.z) > CHUNK / 2 + 0.5) continue;
+      for (let i = 0; i < c.mesh.count && !src; i++) {
+        c.mesh.getMatrixAt(i, m4); p.setFromMatrixPosition(m4);
+        if (Math.abs(p.x - it.x) < 0.02 && Math.abs(p.z - it.z) < 0.02) {
+          src = m4.clone();
+          c.mesh.setMatrixAt(i, zero); c.mesh.instanceMatrix.needsUpdate = true;
+          if (c.cards) { c.cards.setMatrixAt(i, zero); c.cards.instanceMatrix.needsUpdate = true; }
+        }
+      }
+      if (src) break;
+    }
+    for (const arr of this.hash.values()) { const j = arr.indexOf(it); if (j >= 0) { arr.splice(j, 1); break; } }
+    if (!src) return;
+    p.setFromMatrixPosition(src);
+    src.setPosition(0, 0, 0);
+    const g = new THREE.Group();
+    g.position.copy(p);
+    const trunk = new THREE.InstancedMesh(this.geosHi[it.type], this.treeMat, 1);
+    trunk.setMatrixAt(0, src);
+    g.add(trunk);
+    const cg = this.cardGeos && this.cardGeos[it.type];
+    if (cg) { const cards = new THREE.InstancedMesh(cg, it.type === 'pine' ? this.needleMat : this.leafMat, 1); cards.setMatrixAt(0, src); g.add(cards); }
+    g.traverse((o) => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; } });
+    this.scene.add(g);
+    const stump = new THREE.InstancedMesh(this.geos.stump, this.material, 1);
+    const ss = it.s * (it.type === 'birch' ? 0.6 : 0.9);
+    stump.setMatrixAt(0, m4.compose(p, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * 6.28), new THREE.Vector3(ss, ss, ss)));
+    stump.castShadow = stump.receiveShadow = true;
+    this.scene.add(stump);
+    this.addToHash({ x: it.x, z: it.z, r: it.r, h: 0.5, kind: 'stump' });
+    // fall away from the woodcutter: rotate "up" towards the fall direction
+    const a = Math.atan2(it.x - fromX, it.z - fromZ);
+    const fallen = { g, stump, axis: new THREE.Vector3(Math.cos(a), 0, -Math.sin(a)), t: 0, ang: 0, w: 0, done: false };
+    (this.felled = this.felled || []).push(fallen);
+    // keep the forest floor from filling up: the oldest felled trees rot away
+    while (this.felled.length > 24) { const o = this.felled.shift(); this.scene.remove(o.g); this.scene.remove(o.stump); }
+  }
+
+  updateFelled(dt) {
+    if (!this.felled) return;
+    for (const f of this.felled) {
+      if (f.done) continue;
+      f.t += dt;
+      if (f.t < 1.4) continue; // the trunk creaks before it goes
+      // gravity tips it over faster and faster; a small bounce when it hits the ground
+      f.w += (1.2 + Math.sin(f.ang) * 4.5) * dt;
+      f.ang += f.w * dt;
+      if (f.ang >= 1.5) {
+        f.ang = 1.5;
+        f.w = -f.w * 0.2;
+        if (Math.abs(f.w) < 0.05) f.done = true;
+      }
+      f.g.quaternion.setFromAxisAngle(f.axis, f.ang);
+    }
+  }
+
   setGrassDensity(f) {
     for (const g of this.grassChunks) g.mesh.count = Math.floor(g.mesh.userData.total * f);
   }
 
   update(dt, camPos, viewDist, wind) {
     this.uniforms.uTime.value += dt;
+    this.updateFelled(dt);
     this.uniforms.uFadeFar.value = viewDist;
     this.uniforms.uWind.value.set(wind.x, wind.z);
     for (const c of this.chunks) {

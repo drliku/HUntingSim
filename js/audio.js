@@ -280,6 +280,12 @@ export class AudioSystem {
   slash() { this.noiseBurst({ dur: 0.18, freq: 2600, q: 1.2, gain: 0.25, attack: 0.03 }); }
   sizzle() { this.noiseBurst({ dur: 1.4, freq: 5000, type: 'highpass', gain: 0.12, attack: 0.1 }); }
   strike() { this.noiseBurst({ dur: 0.12, freq: 2500, q: 2, gain: 0.3 }); }
+  chop() { this.noiseBurst({ dur: 0.09, freq: 750, q: 2.5, gain: 0.55, attack: 0.001 }); this.tone({ f0: 190, f1: 95, dur: 0.12, type: 'triangle', gain: 0.25, attack: 0.001 }); }
+  treeFall() {
+    this.tone({ f0: 110, f1: 70, dur: 1.4, type: 'sawtooth', gain: 0.05, attack: 0.4 });
+    this.noiseBurst({ dur: 0.9, freq: 260, q: 0.8, gain: 0.7, attack: 0.01, when: 1.5 });
+    this.noiseBurst({ dur: 0.6, freq: 1800, q: 0.7, gain: 0.2, attack: 0.02, when: 1.5 });
+  }
   eatSound() { for (let i = 0; i < 3; i++) this.noiseBurst({ dur: 0.08, freq: 900, q: 1, gain: 0.15, when: i * 0.25 }); }
 
   bird() {

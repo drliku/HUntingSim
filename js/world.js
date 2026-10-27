@@ -1,12 +1,13 @@
 // World assembly: terrain, vegetation, environment, man-made landmarks and collision queries.
 import * as THREE from 'three';
-import { Terrain, riverX, LAKE } from './terrain.js';
+import { Terrain, riverX, LAKE, HALF } from './terrain.js';
 import { Vegetation } from './vegetation.js';
 import { Environment } from './environment.js';
 import { colorize, mergeColored, xf, cylinderBetween, ellipsoid } from './geo.js';
 import { Avatar } from './avatar.js';
 import { decorateCabin, decorateStore } from './buildings.js';
 import { buildFarLand } from './farland.js';
+import { GroundClutter } from './clutter.js';
 
 export const LOCATIONS = [
   { name: 'Cabin Clearing', x: -40, z: -54, desc: 'Starting point and campfire' },
@@ -66,6 +67,11 @@ export class World {
     this.buildPois();
     this.terrain.finishEdits();
     this.farLand = buildFarLand(scene);
+    // leaves, twigs, pinecones, mushrooms and pebbles on the ground (not on Low), kept off building sites
+    if (quality.shadows) {
+      this.clutter = new GroundClutter(scene, this.terrain, HALF);
+      for (const [cx, cz, r] of this.veg.cleared || []) this.clutter.clearArea(cx, cz, r);
+    }
     this.env.setWaterDepth(this.terrain);
     // soft shade on the ground under trees, around rocks and buildings
     const spots = [];
@@ -669,6 +675,7 @@ export class World {
   update(dt, camPos) {
     this.env.update(dt, camPos);
     this.veg.update(dt, camPos, this.env.viewDist * Math.max(0.55, this.env.w.fog) + 30, this.env.wind);
+    if (this.clutter) this.clutter.update(camPos);
     const t = performance.now() / 1000;
     const dh = (dt * this.env.timeScale * 24) / this.env.daySeconds;
     let nearFire = null, nfd = 70;

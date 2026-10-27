@@ -605,6 +605,7 @@ export class Vegetation {
 
   // Remove vegetation and colliders inside a circle (used to clear building sites)
   clearArea(x, z, r) {
+    (this.cleared = this.cleared || []).push([x, z, r]);
     const m4 = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
     const zero = new THREE.Matrix4().makeScale(0, 0, 0);
     for (const c of [...this.chunks, ...this.grassChunks.flatMap((g) => [{ mesh: g.mesh }, g.flowers ? { mesh: g.flowers } : null]).filter(Boolean)]) {

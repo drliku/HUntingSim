@@ -121,6 +121,7 @@ async function boot() {
   const ambient = new Ambient(scene);
   G.ambient = ambient;
   post.reflection.hidden.push(ambient.flies.pts, ambient.dust.pts, ambient.leaves);
+  if (world.clutter) for (const c of world.clutter.chunks) post.reflection.hidden.push(...c.meshes);
   world.env.camRef = camera;
   // draw one frame: through the post-processing chain when it is on, directly otherwise
   const renderFrame = (showWeapon) => {

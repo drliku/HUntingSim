@@ -95,10 +95,12 @@ const RaysShader = {
 // back up with a depth-aware filter and multiplied into the image together with the drifting
 // cloud shadows and the low mist that settles over water and in hollows at dawn.
 const AO_FS = /* glsl */`
-  uniform sampler2D tDepth;
+  #include <packing>
+  uniform sampler2D tDepth, tShadow;
   uniform vec2 uRes;
-  uniform mat4 uProjInv;
-  uniform float uProjY, uRadius;
+  uniform mat4 uProjInv, uCamWorld, uShadowMat;
+  uniform vec3 uCamPos;
+  uniform float uProjY, uRadius, uVol, uAO;
   varying vec2 vUv;
   vec3 viewPos(vec2 uv) {
     float d = texture2D(tDepth, uv).x;
@@ -106,9 +108,30 @@ const AO_FS = /* glsl */`
     return p.xyz / p.w;
   }
   float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+  // How much of the air along the view ray is in sunlight: march through the sun's shadow map.
+  // Gaps in the canopy and between buildings become shafts of light.
+  float volLight(vec3 endW) {
+    vec3 rd = endW - uCamPos;
+    float L = min(length(rd), 80.0);
+    rd = normalize(rd);
+    float j = hash12(gl_FragCoord.xy + 31.7), acc = 0.0;
+    for (int i = 0; i < 22; i++) {
+      float t = (float(i) + j) / 22.0 * L;
+      vec4 sc = uShadowMat * vec4(uCamPos + rd * t, 1.0);
+      vec3 sp = sc.xyz / sc.w;
+      float lit = 1.0;
+      if (sp.x > 0.002 && sp.x < 0.998 && sp.y > 0.002 && sp.y < 0.998 && sp.z < 1.0) lit = step(sp.z - 0.003, unpackRGBAToDepth(texture2D(tShadow, sp.xy)));
+      acc += lit;
+    }
+    return acc / 22.0 * (L / 80.0);
+  }
   void main() {
     float d = texture2D(tDepth, vUv).x;
-    if (d >= 0.99999) { gl_FragColor = vec4(1.0, 1000.0, 0.0, 1.0); return; }
+    if (d >= 0.99999) {
+      float sv = 0.0;
+      if (uVol > 0.5) { vec4 fp = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0); vec3 wpf = (uCamWorld * vec4(fp.xyz / fp.w, 1.0)).xyz; sv = volLight(uCamPos + normalize(wpf - uCamPos) * 80.0); }
+      gl_FragColor = vec4(1.0, 1000.0, sv, 1.0); return;
+    }
     vec3 P = viewPos(vUv);
     float dist = -P.z;
     vec2 px = 1.0 / uRes;
@@ -122,6 +145,7 @@ const AO_FS = /* glsl */`
     float ang = hash12(gl_FragCoord.xy) * 6.2831;
     float occ = 0.0;
     for (int i = 0; i < 12; i++) {
+      if (uAO < 0.5) break;
       float fi = (float(i) + 0.5) / 12.0;
       float a = ang + float(i) * 2.39996;
       vec2 off = vec2(cos(a) * uRes.y / uRes.x, sin(a)) * rad * sqrt(fi);
@@ -131,14 +155,17 @@ const AO_FS = /* glsl */`
     }
     float ao = clamp(1.0 - occ / 12.0 * 3.2, 0.0, 1.0);
     ao = mix(1.0, ao, 1.0 - smoothstep(40.0, 95.0, dist));
-    gl_FragColor = vec4(ao, dist, 0.0, 1.0);
+    if (uAO < 0.5) ao = 1.0;
+    float sv = uVol > 0.5 ? volLight((uCamWorld * vec4(P, 1.0)).xyz) : 0.0;
+    gl_FragColor = vec4(ao, dist, sv, 1.0);
   }`;
 
 const COMPOSE_FS = /* glsl */`
   uniform sampler2D tDiffuse, tDepth, tAO;
   uniform vec2 uAORes;
   uniform mat4 uProjInv, uCamWorld;
-  uniform float uAOStrength, uCloud, uTime, uMist, uMistBase;
+  uniform float uAOStrength, uCloud, uTime, uMist, uMistBase, uVolK;
+  uniform vec3 uVolCol, uCamPos;
   uniform vec2 uCloudOff;
   uniform vec3 uSunDir, uMistColor;
   varying vec2 vUv;
@@ -150,24 +177,37 @@ const COMPOSE_FS = /* glsl */`
   void main() {
     vec4 col = texture2D(tDiffuse, vUv);
     float d = texture2D(tDepth, vUv).x;
-    if (d >= 0.99999) { gl_FragColor = (any(isnan(col)) || any(isinf(col))) ? vec4(0.0) : col; return; }
+    if (d >= 0.99999) {
+      vec3 cs = col.rgb;
+      if (uVolK > 0.0) {
+        vec4 fp = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+        vec3 rd = normalize((uCamWorld * vec4(fp.xyz / fp.w, 1.0)).xyz - uCamPos);
+        float ph = 0.3 + 2.2 * pow(max(dot(rd, uSunDir), 0.0), 8.0);
+        cs += uVolCol * texture2D(tAO, vUv).z * uVolK * ph;
+      }
+      gl_FragColor = (any(isnan(cs)) || any(isinf(cs))) ? vec4(0.0) : vec4(cs, col.a); return;
+    }
     vec4 vp = uProjInv * vec4(vUv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
     vec3 P = vp.xyz / vp.w;
     float dist = -P.z;
     vec3 c = col.rgb;
     // depth-aware blur of the half-resolution AO
-    if (uAOStrength > 0.0) {
-      vec2 t = 1.0 / uAORes;
-      float sum = 0.0, wsum = 0.0;
-      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-        vec2 s = texture2D(tAO, vUv + vec2(float(x), float(y)) * t * 1.2).xy;
-        float w = 1.0 / (0.02 + abs(s.y - dist) / max(dist, 1.0) * 30.0);
-        sum += s.x * w; wsum += w;
-      }
-      float ao = sum / wsum;
-      c *= mix(1.0, ao, uAOStrength);
-    }
     vec3 wp = (uCamWorld * vec4(P, 1.0)).xyz;
+    if (uAOStrength > 0.0 || uVolK > 0.0) {
+      vec2 t = 1.0 / uAORes;
+      float sum = 0.0, vsum = 0.0, wsum = 0.0;
+      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+        vec3 s = texture2D(tAO, vUv + vec2(float(x), float(y)) * t * 1.3).xyz;
+        float w = 1.0 / (0.02 + abs(s.y - dist) / max(dist, 1.0) * 30.0);
+        sum += s.x * w; vsum += s.z * w; wsum += w;
+      }
+      c *= mix(1.0, sum / wsum, uAOStrength);
+      if (uVolK > 0.0) {
+        vec3 rd = normalize(wp - uCamPos);
+        float ph = 0.3 + 2.2 * pow(max(dot(rd, uSunDir), 0.0), 8.0);
+        c += uVolCol * (vsum / wsum) * uVolK * ph;
+      }
+    }
     // drifting cloud shadows, cast along the sun direction from a layer high above
     if (uCloud > 0.001 && dist < 380.0) {
       vec2 q = wp.xz + uSunDir.xz / max(uSunDir.y, 0.15) * (140.0 - wp.y);
@@ -195,7 +235,8 @@ class AtmosPass extends Pass {
     this.aoOn = aoOn;
     this.aoTarget = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType, depthBuffer: false });
     this.aoMat = new THREE.ShaderMaterial({
-      uniforms: { tDepth: { value: null }, uRes: { value: new THREE.Vector2(2, 2) }, uProjInv: { value: new THREE.Matrix4() }, uProjY: { value: 1 }, uRadius: { value: 1.0 } },
+      uniforms: { tDepth: { value: null }, uRes: { value: new THREE.Vector2(2, 2) }, uProjInv: { value: new THREE.Matrix4() }, uProjY: { value: 1 }, uRadius: { value: 1.0 },
+        tShadow: { value: null }, uShadowMat: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() }, uVol: { value: 0 }, uAO: { value: aoOn ? 1 : 0 } },
       vertexShader: GradeShader.vertexShader, fragmentShader: AO_FS, depthTest: false, depthWrite: false,
     });
     this.mat = new THREE.ShaderMaterial({
@@ -204,6 +245,7 @@ class AtmosPass extends Pass {
         uProjInv: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() },
         uAOStrength: { value: aoOn ? 0.9 : 0 }, uCloud: { value: 0 }, uTime: { value: 0 }, uMist: { value: 0 }, uMistBase: { value: 1.5 },
         uCloudOff: { value: new THREE.Vector2() }, uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uMistColor: { value: new THREE.Color() },
+        uVolK: { value: 0 }, uVolCol: { value: new THREE.Color() }, uCamPos: { value: new THREE.Vector3() },
       },
       vertexShader: GradeShader.vertexShader, fragmentShader: COMPOSE_FS, depthTest: false, depthWrite: false,
     });
@@ -225,7 +267,10 @@ class AtmosPass extends Pass {
     this.mat.uniforms.tDepth.value = depth;
     this.mat.uniforms.uProjInv.value.copy(cam.projectionMatrixInverse);
     this.mat.uniforms.uCamWorld.value.copy(cam.matrixWorld);
-    if (this.aoOn && depth) {
+    const au = this.aoMat.uniforms;
+    au.uCamWorld.value.copy(cam.matrixWorld); au.uCamPos.value.setFromMatrixPosition(cam.matrixWorld);
+    this.mat.uniforms.uCamPos.value.copy(au.uCamPos.value);
+    if ((this.aoOn || au.uVol.value > 0.5) && depth) {
       this.aoMat.uniforms.tDepth.value = depth;
       this.aoMat.uniforms.uProjInv.value.copy(cam.projectionMatrixInverse);
       this.aoMat.uniforms.uProjY.value = cam.projectionMatrix.elements[5];
@@ -325,6 +370,15 @@ export class PostFX {
     au.uMistBase.value = WATER_LEVEL + 1.5;
     au.uMistColor.value.copy(this.scene.fog.color).multiplyScalar(0.95);
     au.uTime.value = now / 1000;
+    // volumetric light: shafts through the canopy, strongest at dawn, in mist and fog, against the sun
+    const sh = env.sun.shadow, vu = this.atmos.aoMat.uniforms;
+    const sunUp = Math.max(0, Math.min(1, env.sunDir.y * 5));
+    const volK = (0.05 + au.uMist.value * 0.22 + (1 - env.w.fog) * 0.12 + dawn * 0.1) * sunUp * env.w.light * (1 - (env.w.rain || 0) * 0.6);
+    if (sh && sh.map && env.sun.castShadow && volK > 0.002) {
+      vu.tShadow.value = sh.map.texture; vu.uShadowMat.value = sh.matrix; vu.uVol.value = 1;
+      au.uVolK.value = volK;
+      au.uVolCol.value.copy(env.sun.color).multiplyScalar(env.sun.intensity * 0.5).lerp(this.scene.fog.color, 0.25);
+    } else { vu.uVol.value = 0; au.uVolK.value = 0; }
     // rays only when the sun is up and somewhere ahead of the camera
     const cam = this.camera;
     _sunP.copy(env.sunDir).multiplyScalar(300).add(cam.position);

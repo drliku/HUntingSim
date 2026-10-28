@@ -8,6 +8,7 @@ import { Avatar } from './avatar.js';
 import { decorateCabin, decorateStore } from './buildings.js';
 import { buildFarLand } from './farland.js';
 import { GroundClutter } from './clutter.js';
+import { makeFireFX, updateFireShared } from './firefx.js';
 
 export const LOCATIONS = [
   { name: 'Cabin Clearing', x: -40, z: -54, desc: 'Starting point and campfire' },
@@ -658,18 +659,12 @@ export class World {
     mesh.position.set(x, base, z);
     mesh.receiveShadow = true;
     this.scene.add(mesh);
-    // embers / flame
-    if (!this.fireMat) this.fireMat = new THREE.MeshBasicMaterial({ color: 0xff8a3a, transparent: true, opacity: 0.9, depthWrite: false });
-    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.6, 6, 1, true), this.fireMat);
-    flame.position.set(x, base + 0.35, z);
-    flame.visible = false;
-    this.scene.add(flame);
-    const embers = new THREE.Mesh(new THREE.CircleGeometry(0.32, 10), new THREE.MeshBasicMaterial({ color: 0xc4401a }));
-    embers.rotation.x = -Math.PI / 2;
-    embers.position.set(x, base + 0.06, z);
-    embers.visible = false;
-    this.scene.add(embers);
-    this.fires.push({ x, z, y: base, flame, embers, lit: false, fuel: 0, phase: this.fires.length * 2.3 });
+    // flames, sparks, smoke and glowing coals
+    const fx = makeFireFX();
+    fx.group.position.set(x, base, z);
+    fx.group.visible = false;
+    this.scene.add(fx.group);
+    this.fires.push({ x, z, y: base, fx, lit: false, fuel: 0, phase: this.fires.length * 2.3 });
   }
 
   update(dt, camPos) {
@@ -679,17 +674,19 @@ export class World {
     const t = performance.now() / 1000;
     const dh = (dt * this.env.timeScale * 24) / this.env.daySeconds;
     let nearFire = null, nfd = 70;
+    updateFireShared(t, this.env.wind);
     for (const f of this.fires) {
       if (f.lit) {
         f.fuel -= dh * (1 + this.env.w.rain * 1.5);
         if (f.fuel <= 0) { f.lit = false; f.fuel = 0; if (this.onFireOut) this.onFireOut(f); }
       }
-      f.flame.visible = f.embers.visible = f.lit;
+      f.fx.group.visible = f.lit;
       if (!f.lit) continue;
       const flick = 0.75 + Math.sin(t * 13 + f.phase) * 0.12 + Math.sin(t * 7.3 + f.phase) * 0.1;
+      // the fire dies down as the wood burns out
       const k = Math.min(1, f.fuel / 0.5 + 0.3);
-      f.flame.scale.set(k, (0.8 + flick * 0.4) * k, k);
-      f.flame.rotation.y = t * 2 + f.phase;
+      f.fx.intensity.value = k * (0.85 + flick * 0.2);
+      f.fx.light.value = 0.035 + this.env.daylight * this.env.w.light * 0.85;
       const d = Math.hypot(f.x - camPos.x, f.z - camPos.z);
       if (d < nfd) { nfd = d; nearFire = f; f.flick = flick * k; }
     }

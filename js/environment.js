@@ -169,7 +169,7 @@ void main() {
 const WATER_FS = `
 uniform float uTime, uHalf, uDaylight;
 uniform sampler2D uDepth, tRefl;
-uniform float uRefl, uIce;
+uniform float uRefl, uIce, uRain;
 varying vec4 vRefl;
 uniform vec3 uDeep, uShallow, uSkyTop, uSkyHorizon, uSunDir, uSunColor;
 varying vec3 vWPos;
@@ -186,6 +186,25 @@ void main() {
     0.03 * sin(p.x * 0.9 + t * 1.3) * cos(p.y * 0.7 - t * 1.1) + 0.025 * sin(p.x * 2.3 - p.y * 1.7 + t * 2.1) + 0.015 * sin((p.x + p.y) * 4.1 + t * 3.3) + (vn(p * 3.0 + t * 0.6) - 0.5) * 0.06 + (vn(p * 9.0 - t * 0.9) - 0.5) * 0.03,
     1.0,
     0.025 * cos(p.y * 0.8 + t * 1.2) * sin(p.x * 0.6 - t) + 0.022 * sin(p.y * 2.7 + p.x * 1.3 - t * 1.8) + 0.015 * cos((p.x - p.y) * 3.7 - t * 2.9) + (vn(p * 3.0 - t * 0.5 + 7.0) - 0.5) * 0.06 + (vn(p * 9.0 + t * 0.8 + 3.0) - 0.5) * 0.03));
+  // raindrops: rings spreading out on a jittered grid, each drop starting at its own time
+  if (uRain > 0.01) {
+    vec2 rn = vec2(0.0);
+    for (int k = 0; k < 2; k++) {
+      vec2 q = p * (k == 0 ? 2.3 : 3.9) + float(k) * 17.0;
+      vec2 cell = floor(q);
+      for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+        vec2 c = cell + vec2(float(i), float(j));
+        vec2 ctr = c + 0.15 + vec2(h21(c), h21(c + 5.3)) * 0.7;
+        float sp = 0.9 + h21(c + 2.7) * 0.5, ph = t * sp + h21(c + 9.1);
+        float life = fract(ph);
+        vec2 dv = q - ctr;
+        float dd = length(dv), r = life * 0.75;
+        float ring = sin((dd - r) * 30.0) * smoothstep(0.1, 0.0, abs(dd - r)) * (1.0 - life) * step(h21(c + floor(ph) * 3.1), uRain + 0.15);
+        rn += dv / max(dd, 1e-3) * ring;
+      }
+    }
+    n = normalize(n + vec3(rn.x, 0.0, rn.y) * 0.3 * min(1.0, uRain * 1.4));
+  }
   vec3 V = normalize(cameraPosition - vWPos);
   float fres = mix(0.03, 1.0, pow(1.0 - max(dot(n, V), 0.0), 4.0));
   vec3 R = reflect(-V, n);
@@ -454,9 +473,10 @@ export class Environment {
     const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       uTime: this.waterUniforms.uTime, uDepth: { value: tex }, uHalf: { value: WORLD_SIZE / 2 },
       uDeep: { value: new THREE.Color(0x1d3a44) }, uShallow: { value: new THREE.Color(0x4a7a6a) }, uDaylight: { value: 1 },
-      tRefl: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uRefl: { value: 0 }, uIce: { value: 0 },
+      tRefl: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uRefl: { value: 0 }, uIce: { value: 0 }, uRain: { value: 0 },
     }]);
     this.waterUniforms.uIce = uniforms.uIce;
+    this.waterUniforms.uRain = uniforms.uRain;
     // share the sky's live colours and sun direction
     uniforms.uSkyTop = U.uTop; uniforms.uSkyHorizon = U.uHorizon; uniforms.uSunDir = U.uSunDir; uniforms.uSunColor = U.uSunColor;
     uniforms.uTime = this.waterUniforms.uTime;
@@ -645,6 +665,7 @@ export class Environment {
     this.waterUniforms.uTime.value = tnow;
     this.waterUniforms.uDaylight.value = this.daylight;
     if (this.waterUniforms.uIce) this.waterUniforms.uIce.value = this.ice || 0;
+    if (this.waterUniforms.uRain) this.waterUniforms.uRain.value = this.w.rain || 0;
     if (this.water.material.color) this.water.material.color.setRGB(0.04, 0.1, 0.12).multiplyScalar(0.4 + this.daylight * 0.6).lerp(this.fogColor, 0.12);
   }
 

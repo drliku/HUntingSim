@@ -2,6 +2,7 @@
 // pollen and dust drifting in the air by day, and leaves tumbling down under the trees in the
 // wind. All of them wrap around the camera in a box.
 import * as THREE from 'three';
+import { G } from './state.js';
 
 const VS = /* glsl */`
 uniform float uTime; uniform vec3 uCam; uniform vec3 uBox; uniform float uSize; uniform float uFly;
@@ -107,6 +108,50 @@ export class Ambient {
     this.leaves.frustumCulled = false;
     scene.add(this.leaves);
     this.trees = 0; this.treeT = 0;
+    // your breath: soft puffs of vapour in front of you when the air is cold
+    const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+    const cx = cv.getContext('2d'), gr = cx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,0.9)'); gr.addColorStop(0.45, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    cx.fillStyle = gr; cx.fillRect(0, 0, 64, 64);
+    const tex = new THREE.CanvasTexture(cv);
+    this.puffs = [];
+    for (let i = 0; i < 10; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0, fog: false }));
+      s.visible = false; s.renderOrder = 5;
+      scene.add(s);
+      this.puffs.push({ s, t: 9, v: new THREE.Vector3() });
+    }
+    this.breathT = 1; this.breathN = 0;
+  }
+
+  updateBreath(dt, env) {
+    const P = G.player, cam = G.camera;
+    const cold = P && cam ? Math.min(1, Math.max(0, (7 - (env.tempC ?? 10)) / 9)) : 0;
+    if (cold > 0 && !P.swimming && (this.breathT -= dt) <= 0) {
+      const hard = P.sprinting || P.stamina < 0.5;
+      // a breath out is two or three small puffs; panting comes faster
+      if (this.breathN <= 0) this.breathN = 3;
+      this.breathN--;
+      this.breathT = this.breathN > 0 ? 0.09 : hard ? 1.1 + Math.random() * 0.3 : 3 + Math.random() * 1.2;
+      const p = this.puffs.find((q) => q.t >= 1.8);
+      if (p) {
+        const f = new THREE.Vector3(); cam.getWorldDirection(f);
+        p.s.position.copy(cam.position).addScaledVector(f, 0.42).add(new THREE.Vector3(0, -0.13, 0));
+        p.v.copy(f).multiplyScalar(0.55).add(new THREE.Vector3(env.wind.x * 0.08, 0.18, env.wind.z * 0.08));
+        p.t = 0; p.a = cold * (hard ? 0.5 : 0.36) * (0.35 + env.daylight * 0.65);
+        p.s.material.color.setScalar(0.35 + env.daylight * env.w.light * 0.6);
+        p.s.visible = true;
+      }
+    }
+    for (const p of this.puffs) {
+      if (p.t >= 1.8) { p.s.visible = false; continue; }
+      p.t += dt;
+      p.s.position.addScaledVector(p.v, dt);
+      p.v.multiplyScalar(1 - dt * 1.4);
+      const k = p.t / 1.8;
+      p.s.scale.setScalar(0.1 + k * 0.55);
+      p.s.material.opacity = p.a * Math.sin(Math.min(1, k * 4) * Math.PI / 2) * (1 - k);
+    }
   }
 
   update(dt, cam, env, nearForestOrMeadow = 1, veg = null) {
@@ -134,5 +179,6 @@ export class Ambient {
     L.uOpacity.value = this.trees * (1 - (env.w.snow || 0)) * Math.min(1, 0.35 + ws * 0.12);
     L.uLight.value = 0.06 + env.daylight * env.w.light * 0.9;
     this.leaves.visible = L.uOpacity.value > 0.03;
+    this.updateBreath(dt, env);
   }
 }

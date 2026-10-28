@@ -112,6 +112,10 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers �
 - **Volumetric clouds** (Medium and High): real 3D cumulus ray-marched through a tiling cloud-noise volume and lit by marching again towards the sun, so they have bright sunlit tops, grey-blue bellies and glowing edges when backlit. They gather and thin across the sky, drift with the wind, turn pink and gold at dusk and close into a heavy grey deck when overcast. Stars are drawn in the sky shader so clouds hide them at night.
 - **Temperature and ice:** the temperature (shown next to the weather) follows the weather and the time of day, warmest mid-afternoon and coldest before dawn. When it drops to 0 °C or below (snowy weather), the river and lake freeze over, from the shallows out: milky ice near the shore, dark clear ice over deep water, frost, snow drifts and cracks. Once fully frozen you and the animals can walk on it (it is slippery), and it thaws again when it warms up.
 - **Snow cover and wet weather:** when it snows below freezing, snow builds up over about a minute: a blanket on the ground (thin on slopes, bare rock on cliffs) that glitters in the sun as you move, snow on roofs, rocks, fences, antlers and every branch facing up, and frosted, half-buried grass. It melts once it warms up. Rain soaks everything darker, puddles collect on flat ground and reflect the sky, and things dry out slowly afterwards (faster in daylight).
+- **Living campfires:** licking flames that glow into the bloom, sparks spiralling up, a column of smoke drifting downwind (lit orange at its base), and a bed of pulsing coals. The fire dies down as the wood burns out.
+- **Grass that parts:** grass, flowers and ferns bend away from you and flatten under your feet as you walk or crawl through them.
+- **Rain on water:** raindrops make rings spreading across rivers and the lake.
+- **Breath in the cold:** below about 7 °C your breath fogs in small puffs, faster when you are out of breath.
 - **Lens flare:** looking at the sun gives a soft starburst, coloured ghosts across the lens, a faint halo and a horizontal streak, which fade when trees or hills cover the sun.
 - **Translucent leaves and grass** (Medium and High): lit from behind, leaves and grass blades glow yellow-green where the sun shines through them. Grass tufts are fuller and denser.
 - **Forest floor:** fallen leaves and twigs under the trees, pinecones, the odd cluster of mushrooms (some red with white spots), and pebbles along trails and riverbanks, shown close around you on Medium and High.
@@ -156,6 +160,7 @@ js/geo.js           Vertex-coloured geometry merging helpers
 js/terrain.js       Height field, river/lake/fords, biomes, trails
 js/vegetation.js    Instanced chunked trees, bushes, rocks, grass, colliders
 js/environment.js   Sky, sun/moon, day-night, weather, precipitation, water
+js/firefx.js        Campfire flames, sparks, smoke and coals
 js/world.js         World assembly, cabin, stand, campfire, collisions, locations
 js/species.js       Field guide data, model proportions, behaviour tuning
 js/animalModel.js   Procedural animal rigs

@@ -338,7 +338,7 @@ function addTranslucency(shader, k) {
 }
 
 function addSway(material, strength, uniforms) {
-  material.customProgramCacheKey = function () { return THREE.MeshLambertMaterial.prototype.customProgramCacheKey.call(this) + '|sw' + strength + '|tr' + (this.userData.trans || 0) + (this.userData.frost ? '|fr' : ''); };
+  material.customProgramCacheKey = function () { return THREE.MeshLambertMaterial.prototype.customProgramCacheKey.call(this) + '|sw' + strength + '|tr' + (this.userData.trans || 0) + (this.userData.frost ? '|fr' : '') + '|tp' + (this.userData.trample || 0); };
   material.onBeforeCompile = (shader) => {
     if (SurfaceDetail.enabled && material.userData.detailKind) enhanceShader(shader, material.userData.detailKind);
     if (SurfaceDetail.enabled && material.userData.trans) addTranslucency(shader, material.userData.trans);
@@ -372,6 +372,27 @@ function addSway(material, strength, uniforms) {
       transformed.x += (sway + uWind.x * 0.015 + gust * uWind.x / wl * ${(strength * 0.9).toFixed(3)}) * position.y;
       transformed.z += (sway * 0.6 + uWind.y * 0.015 + gust * uWind.y / wl * ${(strength * 0.9).toFixed(3)}) * position.y;`
     );
+    if (material.userData.trample) {
+      // grass and ferns bend away from you and flatten under your feet as you walk through them
+      shader.uniforms.uPlayer = uniforms.uPlayer;
+      shader.vertexShader = 'uniform vec3 uPlayer;\n' + shader.vertexShader.replace('#include <project_vertex>', `vec4 mvPosition = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+        mvPosition = instanceMatrix * mvPosition;
+        float baseY = instanceMatrix[3].y;
+      #else
+        float baseY = 0.0;
+      #endif
+      {
+        vec2 dv = mvPosition.xz - uPlayer.xz;
+        float dd = length(dv);
+        float k = (1.0 - smoothstep(0.2, 1.25, dd)) * step(abs(baseY - uPlayer.y), 3.0) * ${material.userData.trample.toFixed(2)};
+        float hgt = max(mvPosition.y - baseY, 0.0);
+        mvPosition.xz += dv / max(dd, 0.05) * k * hgt * 1.1;
+        mvPosition.y -= k * hgt * 0.55;
+      }
+      mvPosition = modelViewMatrix * mvPosition;
+      gl_Position = projectionMatrix * mvPosition;`);
+    }
   };
 }
 
@@ -383,7 +404,7 @@ export class Vegetation {
     this.bushes = [];           // positions used by rabbits for hiding
     this.chunks = [];
     this.grassChunks = [];
-    this.uniforms = { uTime: { value: 0 }, uWind: { value: new THREE.Vector2(1, 0) }, uFadeFar: { value: 230 } };
+    this.uniforms = { uTime: { value: 0 }, uWind: { value: new THREE.Vector2(1, 0) }, uFadeFar: { value: 230 }, uPlayer: { value: new THREE.Vector3(0, -999, 0) } };
     const rng = mulberry32(777);
 
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -396,10 +417,12 @@ export class Vegetation {
     this.grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.grassMat.userData.noDetail = true;
     this.grassMat.userData.trans = 1.1;
+    this.grassMat.userData.trample = 1;
     this.grassMat.userData.frost = true;
     addSway(this.grassMat, 0.12, this.uniforms);
     this.flowerMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.flowerMat.userData.noDetail = true;
+    this.flowerMat.userData.trample = 1;
     this.flowerMat.userData.frost = true;
     addSway(this.flowerMat, 0.1, this.uniforms);
 
@@ -412,6 +435,7 @@ export class Vegetation {
     this.geosHi = { pine: makePineHi(), broad: makeBroadleafHi(), birch: makeBirchHi(), bush: makeBushHi(), rock: makeRockHi(), fern: this.geos.fern, log: this.geos.log, stump: this.geos.stump };
     this.fernMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.fernMat.userData.noDetail = true;
+    this.fernMat.userData.trample = 0.8;
     addSway(this.fernMat, 0.06, this.uniforms);
     this.hiDist = !quality.shadows ? -1e9 : quality.grass >= 1 ? 30 : 12; // none on Low, furthest on High
     // leafy cards on the detailed trees and bushes (they flutter a little more than the branches)
@@ -723,6 +747,7 @@ export class Vegetation {
 
   update(dt, camPos, viewDist, wind) {
     this.uniforms.uTime.value += dt;
+    this.uniforms.uPlayer.value.set(camPos.x, camPos.y - 1.2, camPos.z);
     this.updateFelled(dt);
     this.uniforms.uFadeFar.value = viewDist;
     this.uniforms.uWind.value.set(wind.x, wind.z);

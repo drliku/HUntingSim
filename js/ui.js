@@ -12,6 +12,7 @@ import { LOCATIONS } from './world.js';
 import { Stage } from './stage.js';
 import { LOOK_OPTIONS, LOOK_LABELS, loadLook, saveLook, randomLook, lookColor, sanitizeLook } from './avatar.js';
 import { makeAvatar, hunterReady } from './hunterModel.js';
+import { takeFromPack, describe, isEmpty, GIVE_RANGE } from './drops.js';
 import { yawToBearing, compassName, formatClock, clamp, smoothstep } from './utils.js';
 import { HALF, WORLD_SIZE } from './terrain.js';
 import { S } from './animals.js';
@@ -371,6 +372,22 @@ export class UI {
     }
     if (G.net) {
       const now = performance.now();
+      // supply drops: always on the minimap, pinned to the edge when far away
+      const pulse = 0.6 + 0.4 * Math.sin(now / 250);
+      for (const d of G.airdrops.drops.values()) {
+        let [mx, my] = toMini(d.x, d.z);
+        const dx = mx - S / 2, dy = my - S / 2, dd = Math.hypot(dx, dy), rim = S / 2 - 7;
+        if (dd > rim) { mx = S / 2 + dx / dd * rim; my = S / 2 + dy / dd * rim; }
+        ctx.save(); ctx.translate(mx, my); ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = `rgba(255,122,42,${pulse})`; ctx.strokeStyle = '#1a0e06'; ctx.lineWidth = 1.5;
+        ctx.fillRect(-5, -5, 10, 10); ctx.strokeRect(-5, -5, 10, 10); ctx.restore();
+      }
+      for (const b of G.drops.bags.values()) {
+        const [mx, my] = toMini(b.x, b.z);
+        if (Math.hypot(mx - S / 2, my - S / 2) > S / 2 - 4) continue;
+        ctx.fillStyle = '#b8a070'; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 1;
+        ctx.fillRect(mx - 3, my - 2.5, 6, 5); ctx.strokeRect(mx - 3, my - 2.5, 6, 5);
+      }
       // teammates: always shown, pinned to the edge when they're out of range
       for (const p of G.net.players.values()) {
         if (!p.mate || !p.seen) continue;
@@ -450,32 +467,80 @@ export class UI {
     const S = G.survival;
     $('pk-vitals').innerHTML = [['Health', S.health], ['Food', S.food], ['Rest', S.rest]].map(([l, v]) => `<div><b>${Math.round(v)}</b><span>${l}</span></div>`).join('');
     $('pk-load').textContent = `${S.carried().toFixed(1)} / ${S.capacity()} kg`;
-    $('pk-meat').innerHTML = this.meatRows(false) + this.forageRows() + this.supplyRows();
+    const mate = this.giveTarget();
+    const tip = G.mode !== 'survival' ? '' : mate
+      ? `<div class="pk-give mate">${mate.name.replace(/</g, '&lt;')} is right here — what you give goes straight into their pack.</div>`
+      : `<div class="pk-give">Dropped things go in a bag at your feet that anyone can pick up${G.net ? '. Stand within ' + GIVE_RANGE + ' m of a teammate to hand things over directly' : ''}.</div>`;
+    $('pk-meat').innerHTML = tip + this.meatRows(false) + this.forageRows() + this.supplyRows() + this.weaponRows();
+  }
+
+  // the teammate close enough to hand things to, if any
+  giveTarget() {
+    if (!G.net) return null;
+    const P = G.player.pos;
+    let best = null, bd = GIVE_RANGE;
+    for (const p of G.net.players.values()) {
+      if (!p.mate || p.dead || !p.seen) continue;
+      const d = Math.hypot(p.pos.x - P.x, p.pos.z - P.z);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+
+  // "Give" / "Drop" buttons for one pack row; amounts: [label, amount] pairs
+  giveBtns(kind, key, amounts) {
+    if (G.mode !== 'survival') return '';
+    const verb = this.giveTarget() ? 'Give' : 'Drop';
+    return amounts.map(([l, a]) => `<button class="btn small give" data-give="${kind}|${key}|${a}">${verb}${l ? ' ' + l : ''}</button>`).join('');
+  }
+
+  giveOrDrop(kind, key, amount) {
+    const c = takeFromPack(kind, key, amount === 'all' ? 'all' : Number(amount) || 1);
+    if (isEmpty(c)) return;
+    const mate = this.giveTarget(), what = describe(c, 6);
+    if (mate) { G.net.gift(mate, c); this.toast(`You give ${what} to ${mate.name}.`, 'good'); }
+    else { G.drops.drop(c); this.toast(`You drop ${what} in a bag at your feet.`, 'info'); }
+    G.audio?.strike();
+  }
+
+  weaponRows() {
+    if (G.mode !== 'survival') return '';
+    const E = G.equipment, rows = [];
+    for (const g of ['rifle', 'shotgun', 'pistol', 'bow']) {
+      const am = E.ammo[g];
+      if (!E.owned[g] && !(am && am.reserve > 0)) continue;
+      const R = RARITY[E.tier(g)];
+      const label = E.owned[g] ? `<span style="color:${R.css}">${R.name}</span> ${WEAPONS[g].short.toLowerCase()}` : WEAPONS[g].ammo;
+      const btns = (am.reserve > 0 ? this.giveBtns('ammo', g, [[Math.min(5, am.reserve) + ' ammo', 5]]) : '') + (E.owned[g] ? this.giveBtns('gun', g, [['weapon', 1]]) : '');
+      rows.push(`<div class="meat-row"><span>${label} <small>${am.reserve} spare ${WEAPONS[g].ammo}</small></span><span class="acts">${btns}</span></div>`);
+    }
+    return rows.length ? '<h4>Weapons</h4>' + rows.join('') : '';
   }
 
   forageRows() {
     const S = G.survival;
-    const rows = Object.entries(S.forage).map(([t, n]) => `<div class="meat-row"><span>${S.label(t)} <small>× ${n}${S.known.has(t) && FORAGE[t].poison ? ' · poisonous!' : ''}</small></span><span class="acts"><button class="btn small" data-forage="${t}">Eat</button></span></div>`);
+    const rows = Object.entries(S.forage).map(([t, n]) => `<div class="meat-row"><span>${S.label(t)} <small>× ${n}${S.known.has(t) && FORAGE[t].poison ? ' · poisonous!' : ''}</small></span><span class="acts"><button class="btn small" data-forage="${t}">Eat</button>${this.giveBtns('forage', t, n > 1 ? [['', 1], ['all', 'all']] : [['', 1]])}</span></div>`);
     return rows.length ? '<h4>Wild food</h4>' + rows.join('') : '';
   }
 
   supplyRows() {
     const S = G.survival;
     const names = { beans: 'Can of beans', bandage: 'Bandage', medkit: 'First-aid kit', veg: 'Garden vegetables' };
-    const rows = Object.entries(S.items).filter(([, n]) => n > 0).map(([id, n]) => `<div class="meat-row"><span>${names[id]} <small>× ${n}</small></span><span class="acts"><button class="btn small primary" data-use="${id}">Use</button></span></div>`);
-    if (S.wood > 0) rows.push(`<div class="meat-row"><span>Firewood <small>× ${S.wood}</small></span><span class="acts"></span></div>`);
-    const money = G.mode === 'survival' ? `<div class="meat-row"><span>Money</span><span class="st-money" style="font-size:16px">$${S.money}</span></div>` : '';
+    const rows = Object.entries(S.items).filter(([, n]) => n > 0).map(([id, n]) => `<div class="meat-row"><span>${names[id]} <small>× ${n}</small></span><span class="acts"><button class="btn small primary" data-use="${id}">Use</button>${this.giveBtns('item', id, [['', 1]])}</span></div>`);
+    if (S.wood > 0) rows.push(`<div class="meat-row"><span>Firewood <small>× ${S.wood}</small></span><span class="acts">${this.giveBtns('wood', 'w', S.wood > 1 ? [['', 1], ['all', 'all']] : [['', 1]])}</span></div>`);
+    const money = G.mode === 'survival' ? `<div class="meat-row"><span>Money <span class="st-money" style="font-size:16px">$${S.money}</span></span><span class="acts">${S.money > 0 ? this.giveBtns('money', 'm', [['$10', 10], ['$50', 50], ['all', 'all']].filter(([, a]) => a === 'all' || S.money >= a)) : ''}</span></div>` : '';
     return (rows.length || money ? '<h4>Supplies</h4>' : '') + rows.join('') + money;
   }
 
   meatRows(atFire) {
     const S = G.survival;
     const rows = [];
-    for (const [type, kg] of Object.entries(S.cooked)) rows.push(`<div class="meat-row"><span>Cooked ${type.toLowerCase()} <small>${kg.toFixed(1)} kg</small></span><span class="acts"><button class="btn small primary" data-eat="${type}" data-cooked="1">Eat ${PORTION_KG} kg</button></span></div>`);
+    const give = (kind, type, kg) => (atFire ? '' : this.giveBtns(kind, type, kg > PORTION_KG + 1e-6 ? [[PORTION_KG + ' kg', 1], ['all', 'all']] : [['', 1]]));
+    for (const [type, kg] of Object.entries(S.cooked)) rows.push(`<div class="meat-row"><span>Cooked ${type.toLowerCase()} <small>${kg.toFixed(1)} kg</small></span><span class="acts"><button class="btn small primary" data-eat="${type}" data-cooked="1">Eat ${PORTION_KG} kg</button>${give('cooked', type, kg)}</span></div>`);
     for (const [type, kg] of Object.entries(S.raw)) {
       const acts = atFire
         ? `<button class="btn small" data-cook="${type}">Cook ${PORTION_KG} kg</button><button class="btn small" data-cookall="${type}">Cook all</button>`
-        : `<button class="btn small" data-eat="${type}" data-cooked="0">Eat raw</button>`;
+        : `<button class="btn small" data-eat="${type}" data-cooked="0">Eat raw</button>${give('raw', type, kg)}`;
       rows.push(`<div class="meat-row"><span>Raw ${type.toLowerCase()} <small>${kg.toFixed(1)} kg</small></span><span class="acts">${acts}</span></div>`);
     }
     return rows.join('') || '<div class="meat-empty">No meat. Hunt a game animal, inspect it and choose "Harvest meat".</div>';
@@ -607,7 +672,8 @@ export class UI {
     const meatClick = (e) => {
       const b = e.target.closest('button');
       if (!b) return;
-      if (b.dataset.eat) { this.eatItem(b.dataset.eat, b.dataset.cooked === '1'); }
+      if (b.dataset.give) { const [k, key, a] = b.dataset.give.split('|'); this.giveOrDrop(k, key, a); }
+      else if (b.dataset.eat) { this.eatItem(b.dataset.eat, b.dataset.cooked === '1'); }
       else if (b.dataset.forage) { const r = G.survival.eatForage(b.dataset.forage); if (r) { G.audio?.eatSound(); this.toast(r.msg, 'info'); } }
       else if (b.dataset.use) { const m = G.survival.useItem(b.dataset.use); if (m) this.toast(m, 'good'); }
       else if (b.dataset.cook) this.startCooking(b.dataset.cook, false);
@@ -843,7 +909,7 @@ export class UI {
     const ov = $('map-overlay');
     ov.innerHTML = LOCATIONS.map((l, i) => `<div class="map-loc" data-tele="${i}" style="left:${((l.x + HALF) / WORLD_SIZE) * 100}%;top:${((l.z + HALF) / WORLD_SIZE) * 100}%">${l.name}</div>`).join('')
       + this.mapPoiHtml()
-      + '<div id="map-mates"></div><div class="map-player" id="map-player"></div><div id="map-animals"></div>';
+      + '<div id="map-drops"></div><div id="map-mates"></div><div class="map-player" id="map-player"></div><div id="map-animals"></div>';
     ov.onclick = (e) => { const b = e.target.closest('[data-tele]'); if (!b) return; if (G.mode === 'survival') { this.toast('No fast travel in survival mode — you have to walk.', 'warn'); return; } this.teleport(LOCATIONS[+b.dataset.tele]); };
   }
 
@@ -854,6 +920,8 @@ export class UI {
     p.style.left = `calc(${((P.pos.x + HALF) / WORLD_SIZE) * 100}% - 7px)`;
     p.style.top = `calc(${((P.pos.z + HALF) / WORLD_SIZE) * 100}% - 11px)`;
     p.style.transform = `rotate(${yawToBearing(P.yaw)}deg)`;
+    const md = $('map-drops');
+    if (md) md.innerHTML = G.airdrops ? [...G.airdrops.drops.values()].map((d) => `<div class="map-airdrop" style="left:${((d.x + HALF) / WORLD_SIZE) * 100}%;top:${((d.z + HALF) / WORLD_SIZE) * 100}%"><span>Supply drop</span></div>`).join('') : '';
     const mm = $('map-mates');
     if (mm) mm.innerHTML = G.net ? G.net.list.filter((q) => q.mate && q.seen).map((q) => `<div class="map-mate${q.dead ? ' dead' : ''}" style="left:${((q.pos.x + HALF) / WORLD_SIZE) * 100}%;top:${((q.pos.z + HALF) / WORLD_SIZE) * 100}%"><span>${q.name.replace(/</g, '&lt;')}</span></div>`).join('') : '';
     const ab = $('map-animals');
@@ -1401,8 +1469,8 @@ export class UI {
     G.menuOpen = 'death';
     const harvests = G.journal.filter((e) => e.type === 'harvest').length;
     $('dt-cause').textContent = cause;
-    if (G.net && !this.pvpOver) G.net.onLocalDeath(cause);
-    $('death').querySelector('p.muted').textContent = G.net ? 'You lose your gear, meat and supplies. Whoever killed you took your money.' : 'Everything starts over from zero: your journal, money and gear are gone.';
+    if (G.net && !this.pvpOver) { G.drops?.deathBag(G.net.name); G.net.onLocalDeath(cause); }
+    $('death').querySelector('p.muted').textContent = G.net ? 'Your gear, meat and supplies are in a bag where you fell — you or a teammate can pick it up. Whoever killed you took your money.' : 'Everything starts over from zero: your journal, money and gear are gone.';
     $('dt-restart').textContent = this.pvpOver ? 'Back to the menu' : G.net ? 'Respawn' : 'Start over';
     $('dt-stats').innerHTML = [[G.env.day, 'Days'], [harvests, 'Harvests'], [G.discovered.size, 'Species'], [G.mode === 'survival' ? '$' + (G.stats.earned || 0) : '—', 'Earned']]
       .map(([b, t]) => `<div><b>${b}</b><span>${t}</span></div>`).join('');

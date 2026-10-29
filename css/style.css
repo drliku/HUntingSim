@@ -269,6 +269,12 @@ select option { background: #1a1d1b; }
 .map-poi.mine img { width: 32px; height: 32px; filter: drop-shadow(0 0 6px rgba(255,190,90,.9)); }
 .map-poi.mine span { color: #ffd38a; }
 .map-player { position: absolute; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 16px solid var(--accent); transform-origin: 50% 66%; filter: drop-shadow(0 0 3px #000); }
+.map-airdrop { position: absolute; width: 14px; height: 14px; margin: -7px; background: #ff7a2a; border: 2px solid #1a0e06; transform: rotate(45deg); box-shadow: 0 0 10px #ff7a2a; animation: adpulse 1s ease-in-out infinite alternate; }
+.map-airdrop span { position: absolute; left: 50%; top: -22px; transform: rotate(-45deg) translateX(-50%); transform-origin: left; white-space: nowrap; font-size: 12px; font-weight: 700; color: #ffb07a; text-shadow: 0 1px 3px #000; }
+@keyframes adpulse { from { opacity: 0.6; } to { opacity: 1; } }
+.pk-give { font-size: 12px; opacity: 0.75; margin: 2px 0 8px; }
+.pk-give.mate { color: #7dff9a; opacity: 1; }
+.btn.small.give { opacity: 0.85; }
 .map-mate { position: absolute; width: 12px; height: 12px; margin: -6px; border-radius: 50%; background: #50e070; border: 2px solid #0c1a0e; box-shadow: 0 0 6px #50e070; }
 .map-mate.dead { background: #8a8a8a; box-shadow: none; }
 .map-mate span { position: absolute; left: 50%; top: -20px; transform: translateX(-50%); white-space: nowrap; font-size: 12px; font-weight: 700; color: #7dff9a; text-shadow: 0 1px 3px #000; }

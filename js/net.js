@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { G } from './state.js';
 import { DEFAULT_LOOK, sanitizeLook, lookColor, loadLook } from './avatar.js';
 import { makeAvatar, hunterReady } from './hunterModel.js';
+import { giveToPack, describe, isEmpty } from './drops.js';
 
 // Replace Math.random with a seeded generator (so every player builds the same forest).
 // Returns a function that puts the real Math.random back.
@@ -126,7 +127,7 @@ class RemotePlayer {
     this.target.set(m.x, m.y, m.z);
     if (!this.seen) { this.pos.copy(this.target); this.seen = true; }
     this.yaw = m.yaw; this.pitch = m.p || 0; this.aim = m.a || 0; this.draw = m.d || 0; this.tier = m.r || 0;
-    this.crouch = !!m.c; this.prone = !!m.pr; this.sprint = !!m.sp; this.hidden = !!m.hd; this.item = m.it; this.hp = m.hp;
+    this.crouch = !!m.c; this.prone = !!m.pr; this.sprint = !!m.sp; this.vx = m.vx; this.vz = m.vz; this.air = !!m.air; this.hidden = !!m.hd; this.item = m.it; this.hp = m.hp;
     this.dead = !!m.dead; this.moving = !!m.mv; this.visibility = m.vis; this.noise = m.no;
     this.inBed = !!m.bed; this.inCabinSafe = !!m.safe; this.swimming = !!m.sw;
   }
@@ -139,9 +140,9 @@ class RemotePlayer {
     r.visible = this.seen && !this.inBed; // the bed hides you under the covers
     r.position.copy(this.pos);
     if (this.swimming) r.position.y -= 1.15;
-    if (this.dead) r.position.y += 0.25;
+    if (this.dead && !this.avatar.isModel) r.position.y += 0.25; // the model falls onto its back by itself
     r.rotation.y = this.yaw + Math.PI;
-    this.avatar.update(dt, { pitch: this.pitch, aim: this.aim, draw: this.draw, item: this.item, tier: this.tier, moving: this.moving, sprint: this.sprint, crouch: this.crouch, prone: this.prone, dead: this.dead, swimming: this.swimming });
+    this.avatar.update(dt, { pitch: this.pitch, aim: this.aim, draw: this.draw, item: this.item, tier: this.tier, moving: this.moving, sprint: this.sprint, vx: this.vx, vz: this.vz, air: this.air, crouch: this.crouch, prone: this.prone, dead: this.dead, swimming: this.swimming });
     // lying down: the body stretches out behind the head instead of standing on the spot
     const pa = this.avatar.proneAmt;
     if (pa > 0.001) { r.position.x += Math.sin(this.yaw) * 1.5 * pa; r.position.z += Math.cos(this.yaw) * 1.5 * pa; r.position.y += 0.15 * pa; }
@@ -203,6 +204,7 @@ export class Net {
         this.isHost = m.host === m.id;
         { const c = this.myHouse(); if (c) G.player.teleport(c.x + c.dx, c.z + c.D / 2 + 2.2); }
         for (const p of m.players) if (p.id !== this.id) this.players.set(p.id, new RemotePlayer(p.id, p.name));
+        if (this.isHost) G.crates.fill(); // PvP has more crates than solo play
         if (!this.isHost) { A.clearAll(); A.byNid.clear(); }
         this.sendLook();
         ui.toast(this.isHost
@@ -225,6 +227,15 @@ export class Net {
       case 'me': if (from) from.apply(m); break;
       case 'look': if (from) from.setLook(m.look); break;
       case 'team': if (from) this.onTeam(m, from); break;
+      case 'bag': if (m.a === 'set') G.drops.set(m.id, m.x, m.z, m.c, m.o); else G.drops.remove(m.id, false); break;
+      case 'gift': this.onGift(m, from); break;
+      case 'airdrop':
+        if (m.a === 'add') G.airdrops.add(m.id, m.x, m.z, 0);
+        else {
+          G.airdrops.remove(m.id);
+          if (m.a === 'opened') ui.toast(`${from && from.mate ? 'Your teammate ' : ''}${m.name} opened the supply drop.`, from && from.mate ? 'good' : 'info');
+        }
+        break;
       case 'sync': this.applySync(m); break;
       case 'world':
         if (this.isHost) break;
@@ -278,6 +289,7 @@ export class Net {
       upgrades: Object.keys(G.cabin.built),
       crates: G.crates.activeList(),
       baits: W.baits.filter((b) => b.active).map((b) => [r2(b.x), r2(b.z)]),
+      bags: G.drops.list(), airdrops: G.airdrops.list(),
       time: G.env.time, day: G.env.day, wx: G.env.weatherName,
     });
   }
@@ -294,6 +306,10 @@ export class Net {
     G.crates.clear();
     for (const i of m.crates || []) G.crates.show(i, true);
     for (const [x, z] of m.baits || []) W.placeBait(x, z);
+    G.drops.clear();
+    for (const b of m.bags || []) G.drops.set(b.id, b.x, b.z, b.c, b.o, b.t);
+    G.airdrops.clear();
+    for (const d of m.airdrops || []) G.airdrops.add(d.id, d.x, d.z, d.t, false);
   }
 
   queueSpawn(list) { if (this.isHost) for (const a of list) this.spawnQ.push(a); }
@@ -308,7 +324,7 @@ export class Net {
     if (this.meT <= 0) {
       this.meT = 1 / 15;
       this.send({
-        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch && !P.prone ? 1 : 0, pr: P.prone ? 1 : 0, sp: P.sprinting ? 1 : 0, hd: P.hidden ? 1 : 0,
+        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch && !P.prone ? 1 : 0, pr: P.prone ? 1 : 0, sp: P.sprinting ? 1 : 0, vx: r2(P.vel.x), vz: r2(P.vel.z), air: !P.onGround && !P.swimming && !P.inWater ? 1 : 0, hd: P.hidden ? 1 : 0,
         a: Math.round(G.equipment.aim * 10) / 10, d: G.equipment.item === 'bow' ? Math.round((G.equipment.draw || 0) * 10) / 10 : 0, r: G.equipment.tier(G.equipment.item),
         it: G.equipment.item, hp: Math.round(S.health), dead: S.dead ? 1 : 0, mv: P.moving ? 1 : 0,
         vis: r2(P.visibility || 0.5), no: r2(P.noise || 0), bed: P.inBed ? 1 : 0, safe: P.inCabinSafe ? 1 : 0, sw: P.swimming ? 1 : 0,
@@ -410,6 +426,19 @@ export class Net {
     } else if (m.a === 'bye') {
       if (this.team.delete(from.id)) { from.setMate(false); G.ui.toast(`${from.name} left your team.`, 'warn'); }
     }
+  }
+
+  // ---------- gifts between teammates ----------
+  gift(p, c) { this.send({ t: 'gift', to: p.id, c }); }
+
+  onGift(m, from) {
+    if (!m.c || isEmpty(m.c)) return;
+    const left = giveToPack(m.c);
+    const what = describe(m.c, 6);
+    G.ui.toast(`${from ? from.name : 'A teammate'} gave you ${what}.${isEmpty(left) ? '' : ' Your pack is full — the rest is in a bag at your feet.'}`, 'good');
+    if (!isEmpty(left)) G.drops.drop(left);
+    G.audio?.strike();
+    if (G.menuOpen === 'pack') G.ui.renderPack();
   }
 
   // ---------- player vs player ----------

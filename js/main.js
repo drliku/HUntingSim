@@ -19,7 +19,8 @@ import { CabinUpgrades } from './upgrades.js';
 import { Net, seedRandom } from './net.js';
 import { loadLook, lookColor } from './avatar.js';
 import { loadHunter } from './hunterModel.js';
-import { Crates } from './loot.js';
+import { Crates, AirDrops, OPEN_TIME } from './loot.js';
+import { Drops, describe } from './drops.js';
 import { PostFX } from './post.js';
 import { Ambient } from './ambient.js';
 import { rollRarity, RARITY } from './rarity.js';
@@ -108,6 +109,10 @@ async function boot() {
   loadHunter(); // the hunter model other players see (loads in the background)
   const crates = new Crates(scene, world);
   G.crates = crates;
+  const drops = new Drops(scene);
+  G.drops = drops;
+  const airdrops = new AirDrops(scene, crates);
+  G.airdrops = airdrops;
   G.mode = 'free';
   G.cfg = FREE_ROAM;
   world.onFireOut = (fire) => { if (Math.hypot(fire.x - player.pos.x, fire.z - player.pos.z) < 40) ui.toast('The campfire has burned out.', 'info'); };
@@ -193,6 +198,8 @@ async function boot() {
     G.started = true;
     crates.clear();
     crates.fill();
+    drops.clear();
+    airdrops.clear(); airdrops.timer = 150;
     ui.hideMainMenu();
     ui.closeMenus();
     input.lock();
@@ -296,6 +303,10 @@ async function boot() {
     }
     const mate = G.net ? G.net.nearPlayer() : null;
     if (mate) { interaction = { kind: 'team', p: mate, text: G.net.teamText(mate) }; return; }
+    const ad = airdrops.nearestLanded(P.pos.x, P.pos.z, 2.4);
+    if (ad) { interaction = { kind: 'airdrop', d: ad, text: '<kbd>E</kbd>Hold to open the supply drop' }; return; }
+    const bag = drops.nearest(P.pos.x, P.pos.z, 1.7);
+    if (bag) { interaction = { kind: 'bag', b: bag, text: `<kbd>E</kbd>Pick up ${bag.mine ? 'your' : String(bag.owner).replace(/</g, '&lt;') + "'s"} bag — ${describe(bag.c, 3)}` }; return; }
     const ci = crates.nearest(P.pos.x, P.pos.z, 1.8);
     if (ci >= 0) { interaction = { kind: 'crate', i: ci, text: '<kbd>E</kbd>Open the supply crate' }; return; }
     const ar = equipment.nearestStuckArrow(P.pos.x, P.pos.z, 1.8);
@@ -377,6 +388,9 @@ async function boot() {
       else if (us.kind === 'chair') { P.enterBed(us.seat); ui.toast('You settle into the rocking chair and watch the meadow. Rest slowly recovers. Press E to get up.', 'info'); }
       else if (us.kind === 'garden') { const n = cabin.harvestGarden(); if (n) ui.toast(`You pick ${n} fresh vegetables. Eat them from your pack (I). The garden will be ready again tomorrow morning.`, 'good'); }
       interactT = 0;
+    } else if (interaction.kind === 'bag') {
+      drops.pick(interaction.b);
+      interactT = 0;
     } else if (interaction.kind === 'team') {
       G.net?.teamUp(interaction.p);
       interactT = 0;
@@ -439,6 +453,8 @@ async function boot() {
     if (!G.net.isHost) animals.netUpdate(dt); else animals.update(dt);
     birds.update(dt);
     crates.update(dt);
+    drops.update(dt);
+    airdrops.update(dt, world.env.wind);
     survival.update(dt);
     world.updateStores(world.env.time, player.pos.x, player.pos.z);
     G.net.tick(dt);
@@ -534,16 +550,25 @@ async function boot() {
             lightProg = 0; chopT = 0; interaction = null; interactT = 0;
           }
         } else { lightProg = 0; chopT = 0; }
+      } else if (interaction && interaction.kind === 'airdrop') {
+        // prying a supply drop open takes a few seconds, out in the open
+        if (input.isDown('KeyE')) {
+          if ((chopT -= dt) <= 0) { chopT = 0.5; audio.strike(); player.noiseSpike = 0.5; }
+          lightProg += dt / OPEN_TIME;
+          if (lightProg >= 1) { airdrops.open(interaction.d); lightProg = 0; chopT = 0; interaction = null; interactT = 0; }
+        } else { lightProg = 0; chopT = 0; }
       } else lightProg = 0;
       const promptText = interaction ? interaction.text + (lightProg > 0 ? `<span class="hold"><i style="width:${Math.round(lightProg * 100)}%"></i></span>` : '') : null;
       ui.setPrompt(promptText);
-      if (input.wasPressed('KeyE') && interaction && interaction.kind !== 'fire-unlit' && interaction.kind !== 'chop') doInteraction();
+      if (input.wasPressed('KeyE') && interaction && interaction.kind !== 'fire-unlit' && interaction.kind !== 'chop' && interaction.kind !== 'airdrop') doInteraction();
       world.update(dt, camera.position);
       ambient.update(dt, camera.position, world.env, 1, world.veg);
       if (G.net && !G.net.isHost) animals.netUpdate(dt); else animals.update(dt);
       birds.update(dt);
       poachers.update(dt);
       crates.update(dt);
+      drops.update(dt);
+      airdrops.update(dt, world.env.wind);
       G.net?.tick(dt);
       if (G.net) ui.updateBoard(input.isDown('Tab'));
       survival.update(dt);

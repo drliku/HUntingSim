@@ -1,7 +1,13 @@
-// The hunter character model (models/hunter.glb) with motion-captured idle, walk, run and
-// crouch-walk clips (models/hunter-anims.json, retargeted from Mixamo onto the model's rig).
-// On top of the clips: the head and chest follow the player's aim, both hands reach for the
-// weapon's grips (two-bone IK), and lying down stretches the body out flat. The jacket, trousers,
+// The hunter character model (models/hunter.glb) and its motion clips (models/hunter-anims.json,
+// retargeted from Mixamo onto the model's rig): idle, walk forward / left / right, jog, run, crouch
+// idle, crouch walk forward / left / right (the forward crouch and crouch idle are built from the
+// walk and idle with leg IK), a mid-air pose and a fall onto the back.
+// Movement picks walk, jog or run from the actual speed and blends the directions from the way the
+// player is moving relative to where they face; every clip shares one step cycle, aligned on the
+// left heel strike, and plays at the speed the feet need so they don't skate. Jogging and running
+// sideways turn the hips toward the movement while the chest keeps facing forward. On top of the
+// clips: the head and chest follow the player's aim, both hands reach for the weapon's grips
+// (two-bone IK), and lying down stretches the body out flat and crawls. The jacket, trousers,
 // cap and skin are tinted to the player's Customize choices. Same interface as Avatar, which
 // stays as the fallback until (or if) the model loads.
 import * as THREE from 'three';
@@ -10,7 +16,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { POSE, SHOULDER_Y, tieredGeometry, muzzleFlash, lookColor, vcMat, Avatar } from './avatar.js';
 
 const SCALE = 1.08; // the model is 1.70 m; this matches the hunters' eye height
-let tpl = null, clips = null, baseMat = null, loading = null;
+let tpl = null, clips = null, meta = {}, baseMat = null, loading = null;
 
 export const hunterReady = () => !!tpl;
 
@@ -23,6 +29,7 @@ export function loadHunter() {
     const hip = new THREE.Vector3().fromArray(a.hipRest);
     clips = {};
     for (const k in a.clips) clips[k] = toClip(a.clips[k], hip);
+    meta = a.meta || {};
     g.scene.traverse((o) => { if (o.isSkinnedMesh) baseMat = o.material; });
     tpl = g.scene;
   }).catch((e) => { console.warn('Hunter model unavailable — using the built-in avatar.', e); });
@@ -133,15 +140,20 @@ export class HunterAvatar {
       { side: 1, right: false, upper: B.Bone_027, fore: B.Bone_026, hand: B.Bone_025, finger: B.Bone_064 },
     ];
     this.legBones = [B.Bone_010, B.Bone_009, B.Bone_008, B.Bone_015, B.Bone_014, B.Bone_013, B.Bone_001, B.Bone_004, B.Bone_002];
+    this.legs = [{ side: 1, thigh: B.Bone_010, shin: B.Bone_009 }, { side: -1, thigh: B.Bone_015, shin: B.Bone_014 }];
+    // every clip's time is set by hand each frame (shared step cycle), so none advance on their own
     this.mixer = new THREE.AnimationMixer(this.model);
-    this.acts = {};
+    this.acts = {}; this.wts = {};
     for (const k in clips) {
       const a = this.mixer.clipAction(clips[k]);
-      a.play(); a.setEffectiveWeight(k === 'idle' ? 1 : 0);
-      a.time = Math.random() * clips[k].duration;
-      this.acts[k] = a;
+      a.play(); a.timeScale = 0; a.setEffectiveWeight(k === 'idle' ? 1 : 0);
+      this.acts[k] = a; this.wts[k] = k === 'idle' ? 1 : 0;
     }
-    this.wts = { idle: 1, walk: 0, run: 0, crouch: 0 };
+    // bones no clip drives: put back to rest every frame before the procedural layers touch them
+    const driven = new Set(); for (const k in clips) for (const t of clips[k].tracks) driven.add(t.name.split('.')[0]);
+    this.undriven = Object.values(B).filter((b) => !driven.has(b.name));
+    this.phase = Math.random(); this.idleT = Math.random() * 10; this.crawl = 0; this.crawlAmt = 0;
+    this.vel = new THREE.Vector2(); this.hipYaw = 0; this.lastYaw = null; this.yawRate = 0;
     this.weapon = new THREE.Group();
     this.root.add(this.weapon);
     this.items = {}; this.item = null;
@@ -204,23 +216,27 @@ export class HunterAvatar {
     this.deadAmt += ((s.dead ? 1 : 0) - this.deadAmt) * k(6);
     const pr = this.proneAmt;
 
-    // ---- motion clips ----
-    const st = s.dead || s.swimming || pr > 0.5 ? 'idle' : s.crouch ? 'crouch' : s.moving ? (s.sprint ? 'run' : 'walk') : 'idle';
-    for (const n in this.acts) {
-      this.wts[n] += ((n === st ? 1 : 0) - this.wts[n]) * k(8);
-      this.acts[n].setEffectiveWeight(this.wts[n]);
-    }
-    this.acts.crouch.timeScale = s.moving ? 1 : 0; // a still crouch holds the pose
-    this.mixer.update(dt);
-
-    const R = this.root;
+    const R = this.root, B = this.bones;
+    this.locomotion(dt, s, pr);
     R.rotation.x = pr * Math.PI / 2;
-    R.rotation.z = this.deadAmt * 1.45;
     R.updateWorldMatrix(true, true);
-    const B = this.bones;
-    // lying down: legs and back straighten out
-    if (pr > 0.001) for (const b of this.legBones) b.quaternion.slerp(this.rest.get(b), pr);
-    if (pr > 0.001) this.model.updateMatrixWorld(true);
+    // jogging or running sideways: the legs turn toward the movement, the chest stays on target
+    if (Math.abs(this.hipYaw) > 0.01) {
+      const up = _v3.set(0, 1, 0).transformDirection(R.matrixWorld);
+      turn(B.Bone_001, up, this.hipYaw);
+      turn(B.Bone_005, up, -this.hipYaw * 0.45); turn(B.Bone_004, up, -this.hipYaw * 0.3); turn(B.Bone_002, up, -this.hipYaw * 0.25);
+    }
+    // lying down: legs and back straighten out, and crawl when moving
+    if (pr > 0.001) {
+      for (const b of this.legBones) b.quaternion.slerp(this.rest.get(b), pr);
+      this.model.updateMatrixWorld(true);
+      const rt = _v3.set(1, 0, 0).transformDirection(R.matrixWorld), fw = _v2.set(0, 0, 1).transformDirection(R.matrixWorld);
+      for (const L of this.legs) {
+        const c = Math.max(0, Math.sin(this.crawl + (L.side > 0 ? 0 : Math.PI))) * this.crawlAmt;
+        turn(L.thigh, fw, L.side * (0.1 + c * 0.3) * pr);
+        turn(L.shin, rt, (0.12 + c * 0.75) * pr);
+      }
+    }
 
     // ---- head and chest follow the view ----
     const right = _v3.set(1, 0, 0).transformDirection(R.matrixWorld);
@@ -232,13 +248,18 @@ export class HunterAvatar {
     // ---- weapon: carry pose blended with the aim pose, then mirrored into the right hand ----
     const P = POSE[this.item], a = Math.max(this.aimAmt, pr);
     this.weapon.visible = !s.swimming && !s.dead && this.item !== 'none';
-    _m1.compose(_p1.set(0, SHOULDER_Y, 0), _q1.setFromEuler(_e.set(-this.pitch - pr * Math.PI / 2, 0, 0)), _sc);
+    // anchor everything to where the shoulders actually are (crouching, leaning, running bob), in the root's frame
+    const sh = this.sh || (this.sh = new THREE.Vector3());
+    B.Bone_022.getWorldPosition(_v0); B.Bone_027.getWorldPosition(_v1);
+    sh.addVectors(_v0, _v1).multiplyScalar(0.5).applyMatrix4(_m3.copy(R.matrixWorld).invert());
+    sh.x = 0; sh.y += SHOULDER_Y - 1.44; // the poses were laid out for shoulders at SHOULDER_Y
+    _m1.compose(_p1.set(0, sh.y, sh.z), _q1.setFromEuler(_e.set(-this.pitch - pr * Math.PI / 2, 0, 0)), _sc);
     _m2.compose(_p2.fromArray(P.aim[0]), _q2.setFromEuler(_e.set(P.aim[1][0] + this.kick * 0.12, P.aim[1][1], P.aim[1][2])), _sc);
     _m3.multiplyMatrices(_m1, _m2);
     const aimPos = new THREE.Vector3(), aimQ = new THREE.Quaternion();
     _m3.decompose(aimPos, aimQ, _p2);
     if (pr > 0) aimPos.z += (Math.min(aimPos.z, 0.05) - aimPos.z) * pr;
-    const lowPos = _p1.set(P.low[0][0], P.low[0][1] + SHOULDER_Y, P.low[0][2]);
+    const lowPos = _p1.set(P.low[0][0], P.low[0][1] + sh.y, P.low[0][2] + sh.z);
     const lowQ = _q1.setFromEuler(_e.set(P.low[1][0], P.low[1][1], P.low[1][2]));
     const W = this.weapon;
     W.position.lerpVectors(lowPos, aimPos, a);
@@ -267,10 +288,18 @@ export class HunterAvatar {
       if (arm.right && grip === 'string') { grip = [0, 0, -0.04 - this.draw * 0.42]; w = Math.max(a, this.draw); }
       if (!arm.right && P.lAimOnly) w = a;
       if (P.handsAimOnly) w = a;
+      if ((!grip || w < 0.01) && pr > 0.3) {
+        // lying down with a free hand: reach forward along the ground, one arm then the other while crawling
+        const reachF = 0.18 + Math.max(0, Math.sin(this.crawl + (arm.side > 0 ? Math.PI : 0))) * 0.22 * this.crawlAmt;
+        _T.set(arm.side * 0.3, sh.y + reachF, 0.14).applyMatrix4(R.matrixWorld);
+        _P.set(arm.side * 0.7, sh.y - 0.1, 0.35).applyMatrix4(R.matrixWorld);
+        this.reach(arm, _T, _P, pr);
+        continue;
+      }
       if (!grip || w < 0.01) continue;
       _T.set(-grip[0], grip[1], grip[2]).applyMatrix4(W.matrixWorld);
       // elbows out and down
-      _P.set(arm.side * 0.55, SHOULDER_Y - 0.6, -0.2).applyMatrix4(R.matrixWorld);
+      _P.set(arm.side * 0.55, sh.y - 0.6, sh.z - 0.2).applyMatrix4(R.matrixWorld);
       this.reach(arm, _T, _P, w);
       // fingers wrap the grip: point them along the item, tipped down
       const fd = _v0.set(0, arm.right ? -0.75 : -0.45, arm.right ? 0.65 : 0.9).transformDirection(W.matrixWorld);
@@ -278,6 +307,106 @@ export class HunterAvatar {
       arm.finger.getWorldPosition(_E);
       swing(arm.hand, _E, _v1.copy(_W).addScaledVector(fd, _E.distanceTo(_W)), w);
     }
+  }
+
+  // Pick and blend the motion clips for this frame, then pose the skeleton with them.
+  // s.vx / s.vz: world velocity (m/s); without them (the Customize preview, older clients) it falls
+  // back to s.moving at a typical speed straight ahead.
+  locomotion(dt, s, pr) {
+    const k = (r) => Math.min(1, dt * r);
+    const yaw = this.root.rotation.y;
+    if (this.lastYaw !== null) {
+      let d = yaw - this.lastYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+      this.yawRate += (d / Math.max(dt, 1e-3) - this.yawRate) * k(6);
+    }
+    this.lastYaw = yaw;
+    let vx = s.vx ?? 0, vz = s.vz ?? 0;
+    if (s.vx === undefined && s.vz === undefined) {
+      const sp = s.moving ? (s.prone ? 0.75 : s.crouch ? 1.5 : s.sprint ? 6.8 : 3.3) : 0;
+      vx = Math.sin(yaw) * sp; vz = Math.cos(yaw) * sp;
+    }
+    this.vel.x += (vx - this.vel.x) * k(10); this.vel.y += (vz - this.vel.y) * k(10);
+    // into the character's own frame: +z ahead, +x to its left
+    const c = Math.cos(yaw), sn = Math.sin(yaw);
+    let lx = this.vel.x * c - this.vel.y * sn, lz = this.vel.x * sn + this.vel.y * c;
+    let speed = Math.hypot(lx, lz);
+    // turning on the spot: little steps
+    if (speed < 0.3 && Math.abs(this.yawRate) > 1.2 && !s.crouch && pr < 0.5) { lz = Math.min(1.2, Math.abs(this.yawRate) * 0.35); lx = 0; speed = lz; }
+    const th = Math.atan2(lx, lz); // 0 ahead, +pi/2 left, +-pi behind
+    const cf = Math.cos(th), sf = Math.sin(th);
+    const T = {}; for (const n in this.acts) T[n] = 0;
+    const rev = {}; let hipYaw = 0;
+    const wrap = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+    // directional clips: the one nearest the movement direction plays, and the legs turn the rest of
+    // the way; forward/backward cover the diagonals (legs turned up to ~60 degrees), the side steps only
+    // near pure sideways. Neighbours cross-fade in a narrow band only, since blending a forward step
+    // with a side step makes the feet slide. Backward is the forward clip reversed.
+    const dir4 = (fwd, left, right, m) => {
+      const cand = [[fwd, 0, false, 1.0, 1.2], [left, Math.PI / 2, false, 0.4, 0.62], [right, -Math.PI / 2, false, 0.4, 0.62], [fwd, Math.PI, true, 1.0, 1.2]];
+      const ws = cand.map(([, a, , full, zero]) => Math.min(1, Math.max(0, (zero - Math.abs(wrap(th - a))) / (zero - full))));
+      const sum = ws.reduce((x, y) => x + y, 0) || 1;
+      cand.forEach(([n, a, r], i) => {
+        const w = ws[i] / sum; if (!w) return;
+        T[n] += m * w; hipYaw += m * w * wrap(th - a);
+        if (n === fwd) rev[fwd] = r;
+      });
+    };
+    // airborne for a moment (not just a bump going downhill)
+    this.airT = s.air && !s.swimming && !s.dead ? (this.airT || 0) + dt : 0;
+    const air = this.airT > 0.12;
+    this.crawlAmt = pr > 0.5 ? Math.min(1, speed / 0.5) : 0;
+    this.crawl += dt * speed * 5;
+    this.deadT = s.dead ? (this.deadT || 0) + dt : 0;
+    // dying: the knees buckle first, then he goes over onto his back
+    if (s.dead) { if (this.deadT < 0.28) T.crouchIdle = 1; else T.dead = 1; }
+    else if (air) T.air = 1;
+    else if (pr > 0.5 || s.swimming) T.idle = 1;
+    else if (s.crouch) {
+      const m = Math.min(1, speed / 0.5);
+      T.crouchIdle = 1 - m;
+      if (m > 0) dir4('crouchF', 'crouchL', 'crouchR', m);
+    } else {
+      const m = Math.min(1, speed / 0.6);
+      T.idle = 1 - m;
+      if (m > 0) {
+        // speed tiers: walk up to 2 m/s, jog 2.8-4, run from 5 (blended in between)
+        const run = Math.min(1, Math.max(0, (speed - 4.0) / 1.0));
+        const jog = Math.min(1, Math.max(0, (speed - 2.0) / 0.8)) * (1 - run);
+        const walk = 1 - jog - run;
+        if (walk > 0) dir4('walk', 'walkL', 'walkR', m * walk);
+        // faster gaits only have a forward clip: turn the legs toward the movement instead
+        const back = cf < -0.26;
+        let hy = back ? Math.atan2(-lx, -lz) : th;
+        hy = Math.max(-1.2, Math.min(1.2, hy));
+        T.jog += m * jog; T.run += m * run; rev.jog = rev.run = back;
+        hipYaw += hy * (jog + run) * m;
+      }
+    }
+    this.hipYaw += (hipYaw - this.hipYaw) * k(8);
+    // smooth the weights and keep them summing to 1 (a shortfall would blend toward the T-pose)
+    let tot = 0;
+    for (const n in this.acts) { this.wts[n] += (T[n] - this.wts[n]) * k(9); if (this.wts[n] < 1e-3) this.wts[n] = 0; tot += this.wts[n]; }
+    if (tot < 1e-3) { this.wts.idle = 1; tot = 1; }
+    // one step cycle for every moving clip: advance it at the rate the blended gait needs
+    let rate = 0, mw = 0;
+    for (const n in this.acts) {
+      const md = meta[n]; if (!md || !md.speed || !this.wts[n]) continue;
+      rate += this.wts[n] * (speed / (md.speed * SCALE)) / clips[n].duration; mw += this.wts[n];
+    }
+    if (mw > 0) this.phase = (this.phase + dt * rate / mw) % 1;
+    this.idleT += dt;
+    for (const n in this.acts) {
+      const a = this.acts[n], w = this.wts[n] / tot, dur = clips[n].duration, md = meta[n];
+      a.setEffectiveWeight(w);
+      if (!w) continue;
+      if (md && md.speed) {
+        const st = md.strike || [0, 0.5];
+        const ph = rev[n] ? st[1] - this.phase : st[0] + this.phase;
+        a.time = (((ph % 1) + 1) % 1) * dur;
+      } else a.time = n === 'dead' || n === 'air' ? 0.5 : this.idleT % dur;
+    }
+    for (const b of this.undriven) b.quaternion.copy(this.rest.get(b));
+    this.mixer.update(0);
   }
 
   // two-bone IK: shoulder → elbow → wrist onto target T, elbow bending toward the pole

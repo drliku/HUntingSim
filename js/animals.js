@@ -107,7 +107,8 @@ class Animal {
     this.id = nextId++;
     this.species = speciesId;
     this.sp = SPECIES[speciesId];
-    this.b = this.sp.behavior;
+    // a little slower than real life, so a hunter on foot has a chance
+    this.b = { ...this.sp.behavior, run: this.sp.behavior.run * 0.72 };
     this.male = male;
     this.rig = createAnimalRig(speciesId, male);
     this.rig.root.rotation.order = 'YXZ';
@@ -154,7 +155,7 @@ class Animal {
     this.age = Math.max(1, Math.round(1 + Math.random() * (st.ageMax - 1) * (0.4 + k * 0.6)));
     this.weight = wr[0] + (wr[1] - wr[0]) * Math.min(1, k * 0.7 + Math.random() * 0.3);
     this.tagged = false; this.harvest = null; this.popupShown = false;
-    this.skinned = false; this.meatTaken = false;
+    this.skinned = false; this.meatTaken = false; this.wounded = false; this.knifeHits = 0;
     this.prey = null;
     const r = this.rig;
     r.root.scale.setScalar(this.scale);
@@ -394,7 +395,7 @@ class Animal {
         break;
       case S.FLEE: {
         const td = Math.hypot(this.pos.x - this.threat.x, this.pos.z - this.threat.z);
-        this.targetSpeed = b.run * (this.stateT < 4 ? 1 : 0.75);
+        this.targetSpeed = b.run * (this.stateT < 3.5 ? 1 : this.stateT < 12 ? 0.6 : 0.45);
         // zig-zag for rabbits, gentle weave for others
         const weave = b.hides ? Math.sin(this.stateT * 5) * 0.7 : Math.sin(this.stateT * 0.9 + this.id) * 0.25;
         this.desired = this.fleeAngle + weave;
@@ -606,6 +607,8 @@ class Animal {
 
     const turn = b.turnRate * (this.speed > b.trot ? 0.8 : 1.2);
     this.heading = dampAngle(this.heading, this.desired + this.avoid, turn, dt);
+    // a knife wound slows them right down
+    if (this.wounded) this.targetSpeed = Math.min(this.targetSpeed, b.trot * 0.8);
     const accel = this.targetSpeed > this.speed ? 2.5 : 3.5;
     this.speed = damp(this.speed, this.targetSpeed, accel, dt);
     if (this.speed < 0.02) this.speed = 0;
@@ -794,9 +797,11 @@ class Animal {
   // Struck with the knife: small animals go down, big ones break off and run
   knifeHit(shooter) {
     this.knifeHits = (this.knifeHits || 0) + 1;
-    const kg = this.weight;
-    if (kg < 45 || (kg < 160 && this.knifeHits >= 2)) return true; // caller records the kill
-    if (this.state === S.ATTACK) this.endAttack(); else this.flee(shooter.x, shooter.z, true);
+    // anything under 200 kg goes down to one good stab; the giants (bear, moose, bison) take two,
+    // and the first leaves them wounded and slow so you can finish the job
+    if (this.weight < 200 || this.knifeHits >= 2) return true; // caller records the kill
+    this.wounded = true;
+    if (this.state !== S.ATTACK) this.flee(shooter.x, shooter.z, true);
     return false;
   }
 

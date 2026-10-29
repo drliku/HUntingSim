@@ -370,8 +370,17 @@ export class UI {
     }
     if (G.net) {
       const now = performance.now();
+      // teammates: always shown, pinned to the edge when they're out of range
       for (const p of G.net.players.values()) {
-        if (now - p.shotAt > 6000) continue;
+        if (!p.mate || !p.seen) continue;
+        let [mx, my] = toMini(p.pos.x, p.pos.z);
+        const dx = mx - S / 2, dy = my - S / 2, dd = Math.hypot(dx, dy), rim = S / 2 - 6;
+        if (dd > rim) { mx = S / 2 + dx / dd * rim; my = S / 2 + dy / dd * rim; }
+        ctx.beginPath(); ctx.arc(mx, my, 5, 0, Math.PI * 2); ctx.fillStyle = p.dead ? '#8a8a8a' : '#50e070'; ctx.fill();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = '#0c1a0e'; ctx.stroke();
+      }
+      for (const p of G.net.players.values()) {
+        if (p.mate || now - p.shotAt > 6000) continue;
         const [mx, my] = toMini(p.pos.x, p.pos.z);
         const a = 1 - (now - p.shotAt) / 6000;
         ctx.beginPath(); ctx.arc(mx, my, 5, 0, Math.PI * 2); ctx.fillStyle = `rgba(255,80,60,${a})`; ctx.fill();
@@ -833,7 +842,7 @@ export class UI {
     const ov = $('map-overlay');
     ov.innerHTML = LOCATIONS.map((l, i) => `<div class="map-loc" data-tele="${i}" style="left:${((l.x + HALF) / WORLD_SIZE) * 100}%;top:${((l.z + HALF) / WORLD_SIZE) * 100}%">${l.name}</div>`).join('')
       + this.mapPoiHtml()
-      + '<div class="map-player" id="map-player"></div><div id="map-animals"></div>';
+      + '<div id="map-mates"></div><div class="map-player" id="map-player"></div><div id="map-animals"></div>';
     ov.onclick = (e) => { const b = e.target.closest('[data-tele]'); if (!b) return; if (G.mode === 'survival') { this.toast('No fast travel in survival mode — you have to walk.', 'warn'); return; } this.teleport(LOCATIONS[+b.dataset.tele]); };
   }
 
@@ -844,6 +853,8 @@ export class UI {
     p.style.left = `calc(${((P.pos.x + HALF) / WORLD_SIZE) * 100}% - 7px)`;
     p.style.top = `calc(${((P.pos.z + HALF) / WORLD_SIZE) * 100}% - 11px)`;
     p.style.transform = `rotate(${yawToBearing(P.yaw)}deg)`;
+    const mm = $('map-mates');
+    if (mm) mm.innerHTML = G.net ? G.net.list.filter((q) => q.mate && q.seen).map((q) => `<div class="map-mate${q.dead ? ' dead' : ''}" style="left:${((q.pos.x + HALF) / WORLD_SIZE) * 100}%;top:${((q.pos.z + HALF) / WORLD_SIZE) * 100}%"><span>${q.name.replace(/</g, '&lt;')}</span></div>`).join('') : '';
     const ab = $('map-animals');
     if (G.sandbox.revealAnimals) {
       ab.innerHTML = G.animals.list.filter((a) => a.state !== S.DOWN).map((a) => `<div class="map-animal" title="${a.sp.name}" style="left:${((a.pos.x + HALF) / WORLD_SIZE) * 100}%;top:${((a.pos.z + HALF) / WORLD_SIZE) * 100}%"></div>`).join('');
@@ -1548,7 +1559,7 @@ export class UI {
   updatePvpHud() {
     const n = G.net;
     if (!n) return;
-    const txt = `PvP · game ${n.code}${n.isHost ? ' (host)' : ''} · ${n.players.size + 1} players · ${n.kills} kills · <kbd>Tab</kbd> scores`;
+    const txt = `PvP · game ${n.code}${n.isHost ? ' (host)' : ''} · ${n.players.size + 1} players${n.team.size ? ` · team of ${n.team.size + 1}` : ''} · ${n.kills} kills · <kbd>Tab</kbd> scores`;
     if (this._pvpTxt !== txt) { $('pvp-hud').innerHTML = txt; this._pvpTxt = txt; }
   }
 
@@ -1557,7 +1568,7 @@ export class UI {
     el.classList.toggle('hidden', !show);
     if (!show) return;
     const n = G.net;
-    const rows = [{ name: n.name + ' (you)', kills: n.kills, deaths: n.deaths, hp: Math.round(G.survival.health), dead: G.survival.dead }, ...n.list.map((p) => ({ name: p.name, kills: p.kills, deaths: p.deaths, hp: p.hp, dead: p.dead }))];
+    const rows = [{ name: n.name + ' (you)', kills: n.kills, deaths: n.deaths, hp: Math.round(G.survival.health), dead: G.survival.dead }, ...n.list.map((p) => ({ name: p.name + (p.mate ? ' ★ team' : ''), kills: p.kills, deaths: p.deaths, hp: p.hp, dead: p.dead }))];
     rows.sort((a, b) => b.kills - a.kills);
     el.innerHTML = `<h3>Game ${n.code}</h3><table><tr><th>Hunter</th><th>Kills</th><th>Deaths</th><th></th></tr>${rows.map((r) => `<tr><td>${r.name.replace(/</g, '&lt;')}</td><td>${r.kills}</td><td>${r.deaths}</td><td>${r.dead ? 'dead' : ''}</td></tr>`).join('')}</table>`;
   }

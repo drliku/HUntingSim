@@ -292,6 +292,8 @@ async function boot() {
         return;
       }
     }
+    const mate = G.net ? G.net.nearPlayer() : null;
+    if (mate) { interaction = { kind: 'team', p: mate, text: G.net.teamText(mate) }; return; }
     const ci = crates.nearest(P.pos.x, P.pos.z, 1.8);
     if (ci >= 0) { interaction = { kind: 'crate', i: ci, text: '<kbd>E</kbd>Open the supply crate' }; return; }
     const ar = equipment.nearestStuckArrow(P.pos.x, P.pos.z, 1.8);
@@ -372,6 +374,9 @@ async function boot() {
       else if (us.kind === 'stove') ui.showCampfire(cabin.stoveFire);
       else if (us.kind === 'chair') { P.enterBed(us.seat); ui.toast('You settle into the rocking chair and watch the meadow. Rest slowly recovers. Press E to get up.', 'info'); }
       else if (us.kind === 'garden') { const n = cabin.harvestGarden(); if (n) ui.toast(`You pick ${n} fresh vegetables. Eat them from your pack (I). The garden will be ready again tomorrow morning.`, 'good'); }
+      interactT = 0;
+    } else if (interaction.kind === 'team') {
+      G.net?.teamUp(interaction.p);
       interactT = 0;
     } else if (interaction.kind === 'store') {
       ui.showStore(interaction.st);

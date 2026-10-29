@@ -5,12 +5,13 @@ import { G } from './state.js';
 import { colorize, mergeColored, xf, ellipsoid, cylinderBetween } from './geo.js';
 import { clamp, damp, dampAngle } from './utils.js';
 import { PLAY_LIMIT } from './terrain.js';
+import { enhanceMaterial } from './matfx.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const _push = { x: 0, z: 0 };
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _o = new THREE.Vector3(), _d = new THREE.Vector3();
 const rnd = (a, b) => a + Math.random() * (b - a);
-const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+const material = enhanceMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }), { grain: 0.11, freq: 75, rim: 0.3 });
 
 let geo = null;
 function buildGeometry() {

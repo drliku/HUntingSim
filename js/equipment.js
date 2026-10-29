@@ -1170,7 +1170,7 @@ export class Equipment {
     G.ui.hitMarker(false);
     const kill = a.isBird ? true : a.knifeHit(G.player.pos);
     if (kill) this.onAnimalHit({ animal: a, part: 'vitals', dist: Math.max(1, ah.dist) });
-    else { G.net?.spook(a); G.ui.toast(`The ${a.sp.name.toLowerCase()} is too big to bring down with a knife — it breaks away.`, 'info'); }
+    else { G.net?.spook(a); G.ui.toast(`You wounded the ${a.sp.name.toLowerCase()}! It's slowed down — catch it and strike again to finish it.`, 'info'); }
   }
 
   render(renderer) {

@@ -269,6 +269,9 @@ select option { background: #1a1d1b; }
 .map-poi.mine img { width: 32px; height: 32px; filter: drop-shadow(0 0 6px rgba(255,190,90,.9)); }
 .map-poi.mine span { color: #ffd38a; }
 .map-player { position: absolute; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 16px solid var(--accent); transform-origin: 50% 66%; filter: drop-shadow(0 0 3px #000); }
+.map-mate { position: absolute; width: 12px; height: 12px; margin: -6px; border-radius: 50%; background: #50e070; border: 2px solid #0c1a0e; box-shadow: 0 0 6px #50e070; }
+.map-mate.dead { background: #8a8a8a; box-shadow: none; }
+.map-mate span { position: absolute; left: 50%; top: -20px; transform: translateX(-50%); white-space: nowrap; font-size: 12px; font-weight: 700; color: #7dff9a; text-shadow: 0 1px 3px #000; }
 .map-animal { position: absolute; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: #ff6b5a; box-shadow: 0 0 4px #000; }
 
 #lock-hint { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 44; padding: 12px 22px; border-radius: 10px; background: var(--bg-strong); border: 1px solid var(--line-strong); cursor: pointer; }

@@ -6,8 +6,10 @@ import * as THREE from 'three';
 import { SPECIES } from './species.js';
 import { colorize, mergeColored, ellipsoid, cylinderBetween, xf, loft as loftGeo, curveRings } from './geo.js';
 import { mulberry32 } from './utils.js';
+import { enhanceMaterial } from './matfx.js';
 
-export const animalMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+// fur: a fine grain over the painted coat and a soft sheen around the outline
+export const animalMaterial = enhanceMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }), { grain: 0.12, freq: 85, rim: 0.38 });
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const cache = new Map();

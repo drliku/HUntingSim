@@ -63,7 +63,7 @@ class RemotePlayer {
     this.pos = new THREE.Vector3(0, -50, 0);
     this.target = new THREE.Vector3(0, -50, 0);
     this.eye = new THREE.Vector3();
-    this.yaw = 0; this.pitch = 0; this.aim = 0; this.draw = 0; this.crouch = false; this.item = 'knife'; this.hp = 100;
+    this.yaw = 0; this.pitch = 0; this.aim = 0; this.draw = 0; this.crouch = false; this.prone = false; this.mate = false; this.mark = null; this.markTxt = ''; this.item = 'knife'; this.hp = 100;
     this.dead = false; this.moving = false; this.visibility = 0.5; this.noise = 0.2;
     this.inBed = false; this.inCabinSafe = false; this.swimming = false;
     this.kills = 0; this.deaths = 0; this.shotAt = 0; this.seen = false;
@@ -72,8 +72,36 @@ class RemotePlayer {
 
   setTag() {
     if (this.tag) { this.root.remove(this.tag); this.tag.material.map.dispose(); this.tag.material.dispose(); }
-    this.tag = nameTag(this.name, lookColor('jacket', this.look.jacket));
+    this.tag = nameTag(this.mate ? '★ ' + this.name : this.name, this.mate ? 0x50e070 : lookColor('jacket', this.look.jacket));
     this.root.add(this.tag);
+  }
+
+  // teammates get a marker that shows through everything, anywhere on the map
+  setMate(on) {
+    this.mate = on;
+    if (on && !this.mark) {
+      const cv = document.createElement('canvas'); cv.width = 256; cv.height = 96;
+      this.mark = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, depthWrite: false, fog: false, sizeAttenuation: false, transparent: true }));
+      this.mark.renderOrder = 999;
+      this.mark.scale.set(0.2, 0.075, 1);
+      this.markTxt = '';
+      G.scene.add(this.mark);
+    }
+    if (!on && this.mark) { G.scene.remove(this.mark); this.mark.material.map.dispose(); this.mark.material.dispose(); this.mark = null; }
+    this.setTag();
+  }
+
+  drawMark(txt) {
+    if (txt === this.markTxt) return;
+    this.markTxt = txt;
+    const cv = this.mark.material.map.image, ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, 256, 96);
+    ctx.font = '700 26px Inter, sans-serif'; ctx.textAlign = 'center';
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.fillStyle = '#7dff9a';
+    ctx.strokeText(txt, 128, 30); ctx.fillText(txt, 128, 30);
+    ctx.beginPath(); ctx.moveTo(110, 48); ctx.lineTo(146, 48); ctx.lineTo(128, 74); ctx.closePath();
+    ctx.lineWidth = 4; ctx.stroke(); ctx.fill();
+    this.mark.material.map.needsUpdate = true;
   }
 
   setLook(look) {
@@ -86,25 +114,36 @@ class RemotePlayer {
     this.target.set(m.x, m.y, m.z);
     if (!this.seen) { this.pos.copy(this.target); this.seen = true; }
     this.yaw = m.yaw; this.pitch = m.p || 0; this.aim = m.a || 0; this.draw = m.d || 0; this.tier = m.r || 0;
-    this.crouch = !!m.c; this.hidden = !!m.hd; this.item = m.it; this.hp = m.hp;
+    this.crouch = !!m.c; this.prone = !!m.pr; this.hidden = !!m.hd; this.item = m.it; this.hp = m.hp;
     this.dead = !!m.dead; this.moving = !!m.mv; this.visibility = m.vis; this.noise = m.no;
     this.inBed = !!m.bed; this.inCabinSafe = !!m.safe; this.swimming = !!m.sw;
   }
 
   update(dt) {
     this.pos.lerp(this.target, Math.min(1, dt * 12));
-    this.eye.set(this.pos.x, this.pos.y + (this.crouch ? 1.15 : 1.6), this.pos.z);
+    this.eye.set(this.pos.x, this.pos.y + (this.prone ? 0.42 : this.crouch ? 1.15 : 1.6), this.pos.z);
     const r = this.root;
     r.visible = this.seen && !this.inBed; // the bed hides you under the covers
     r.position.copy(this.pos);
     if (this.swimming) r.position.y -= 1.15;
     if (this.dead) r.position.y += 0.25;
     r.rotation.y = this.yaw + Math.PI;
-    this.avatar.update(dt, { pitch: this.pitch, aim: this.aim, draw: this.draw, item: this.item, tier: this.tier, moving: this.moving, crouch: this.crouch, dead: this.dead, swimming: this.swimming });
-    this.tag.visible = !this.dead && G.camera.position.distanceTo(this.pos) < 45;
+    this.avatar.update(dt, { pitch: this.pitch, aim: this.aim, draw: this.draw, item: this.item, tier: this.tier, moving: this.moving, crouch: this.crouch, prone: this.prone, dead: this.dead, swimming: this.swimming });
+    // lying down: the body stretches out behind the head instead of standing on the spot
+    const pa = this.avatar.proneAmt;
+    if (pa > 0.001) { r.position.x += Math.sin(this.yaw) * 1.5 * pa; r.position.z += Math.cos(this.yaw) * 1.5 * pa; r.position.y += 0.15 * pa; }
+    // the tag lives in the body's frame: keep it floating above the head when lying down
+    this.tag.position.set(0, 2.15 - 0.45 * pa, -0.75 * pa);
+    const d = G.camera.position.distanceTo(this.pos);
+    this.tag.visible = !this.dead && (d < 45 || (this.mate && d < 120));
+    if (this.mark) {
+      this.mark.visible = this.seen && d > 9;
+      this.mark.position.set(this.pos.x, this.pos.y + (this.prone ? 0.9 : 2.5), this.pos.z);
+      if (this.mark.visible) this.drawMark(`${this.name} · ${d < 1000 ? Math.round(d) + ' m' : (d / 1000).toFixed(1) + ' km'}${this.dead ? ' · down' : ''}`);
+    }
   }
 
-  remove() { G.scene.remove(this.root); this.avatar.dispose(); }
+  remove() { if (this.mark) this.setMate(false); G.scene.remove(this.root); this.avatar.dispose(); }
 }
 
 // ---------- connection ----------
@@ -122,6 +161,7 @@ export class Net {
     this.kills = 0; this.deaths = 0;
     this.lastHit = null;
     this.connected = false;
+    this.team = new Set(); this.teamAsk = new Map(); this.asked = new Map();
   }
 
   get list() { return [...this.players.values()]; }
@@ -166,11 +206,12 @@ export class Net {
         break;
       case 'peer-left': {
         const p = this.players.get(m.id);
-        if (p) { ui.toast(`${p.name} left the game.`, 'info'); p.remove(); this.players.delete(m.id); }
+        if (p) { ui.toast(`${p.name} left the game.`, 'info'); p.remove(); this.players.delete(m.id); this.team.delete(m.id); this.teamAsk.delete(m.id); this.asked.delete(m.id); }
         break;
       }
       case 'me': if (from) from.apply(m); break;
       case 'look': if (from) from.setLook(m.look); break;
+      case 'team': if (from) this.onTeam(m, from); break;
       case 'sync': this.applySync(m); break;
       case 'world':
         if (this.isHost) break;
@@ -181,7 +222,7 @@ export class Net {
       case 'spawn': if (!this.isHost) A.netSpawn(m.list); break;
       case 'despawn': if (!this.isHost) A.netDespawn(m.n); break;
       case 'down': A.netDown(m); break;
-      case 'spook': if (this.isHost) { const a = A.byNid.get(m.n); if (a && a.state !== 'down') { if (a.state === 'attack') a.endAttack(); else a.flee(m.x, m.z, true); } } break;
+      case 'spook': if (this.isHost) { const a = A.byNid.get(m.n); if (a && a.state !== 'down') { if (m.w) a.wounded = true; if (a.state === 'attack') a.endAttack(); else a.flee(m.x, m.z, true); } } break;
       case 'noise': if (this.isHost) A.soundEvent(m.x, m.z, m.r, m.k); break;
       case 'call': if (this.isHost) A.callEvent(m.x, m.z); break;
       case 'bait': W.placeBait(m.x, m.z); break;
@@ -254,7 +295,7 @@ export class Net {
     if (this.meT <= 0) {
       this.meT = 1 / 15;
       this.send({
-        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch || P.prone ? 1 : 0, hd: P.hidden ? 1 : 0,
+        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch && !P.prone ? 1 : 0, pr: P.prone ? 1 : 0, hd: P.hidden ? 1 : 0,
         a: Math.round(G.equipment.aim * 10) / 10, d: G.equipment.item === 'bow' ? Math.round((G.equipment.draw || 0) * 10) / 10 : 0, r: G.equipment.tier(G.equipment.item),
         it: G.equipment.item, hp: Math.round(S.health), dead: S.dead ? 1 : 0, mv: P.moving ? 1 : 0,
         vis: r2(P.visibility || 0.5), no: r2(P.noise || 0), bed: P.inBed ? 1 : 0, safe: P.inCabinSafe ? 1 : 0, sw: P.swimming ? 1 : 0,
@@ -276,7 +317,7 @@ export class Net {
   sendLook(to) { const m = { t: 'look', look: loadLook() }; if (to) m.to = to; this.send(m); }
   shot(item, loud) { const p = G.camera.position; this.send({ t: 'shot', x: r2(p.x), y: r2(p.y), z: r2(p.z), w: item, loud }); }
   noise(x, z, r, k) { if (!this.isHost) this.send({ t: 'noise', to: 'host', x: r2(x), z: r2(z), r, k }); }
-  spook(a) { if (!this.isHost) this.send({ t: 'spook', to: 'host', n: a.nid, x: r2(G.player.pos.x), z: r2(G.player.pos.z) }); }
+  spook(a) { if (!this.isHost) this.send({ t: 'spook', to: 'host', n: a.nid, w: a.wounded ? 1 : 0, x: r2(G.player.pos.x), z: r2(G.player.pos.z) }); }
   call(x, z) { this.send({ t: 'call', to: 'host', x: r2(x), z: r2(z) }); }
   bait(x, z) { this.send({ t: 'bait', x: r2(x), z: r2(z) }); }
   tag(a, meat = false) { if (!a.isBird) this.send({ t: 'tag', n: a.nid, meat: meat ? 1 : 0 }); }
@@ -292,14 +333,83 @@ export class Net {
   damage(p, amount, cause, from) { this.send({ t: 'dmg', to: p.id, amount, cause, x: r2(from.x), z: r2(from.z) }); }
   warn(p, text) { this.send({ t: 'warn', to: p.id, text }); }
 
+  // ---------- teams ----------
+  // Walk up to someone and press E to ask; they press E on you to accept (or you both ask).
+  // Teammates see each other anywhere on the map and can't hurt each other.
+  isMate(id) { return this.team.has(id); }
+
+  nearPlayer() {
+    const P = G.player;
+    let best = null, bd = 3.2;
+    for (const p of this.players.values()) {
+      if (p.dead || !p.seen || p.inBed) continue;
+      const dx = p.pos.x - P.pos.x, dz = p.pos.z - P.pos.z, d = Math.hypot(dx, dz);
+      if (d >= bd || Math.abs(p.pos.y - P.pos.y) > 2.5) continue;
+      // in front of you (or right next to you)
+      if (d > 1.6 && (-Math.sin(P.yaw) * dx - Math.cos(P.yaw) * dz) / d < 0.5) continue;
+      best = p; bd = d;
+    }
+    return best;
+  }
+
+  teamText(p) {
+    const n = p.name.replace(/</g, '&lt;');
+    if (this.team.has(p.id)) return `<kbd>E</kbd>Leave the team with ${n}`;
+    if (this.teamAsk.has(p.id) && performance.now() - this.teamAsk.get(p.id) < 60000) return `<kbd>E</kbd>Accept ${n}'s team request`;
+    if (this.asked.has(p.id) && performance.now() - this.asked.get(p.id) < 60000) return `Waiting for ${n} to accept · <kbd>E</kbd>Ask again`;
+    return `<kbd>E</kbd>Team up with ${n}`;
+  }
+
+  teamUp(p) {
+    const ui = G.ui, now = performance.now();
+    if (this.team.has(p.id)) {
+      this.team.delete(p.id); p.setMate(false);
+      this.send({ t: 'team', to: p.id, a: 'bye' });
+      ui.toast(`You left the team with ${p.name}.`, 'info');
+      return;
+    }
+    if (this.teamAsk.has(p.id) && now - this.teamAsk.get(p.id) < 60000) {
+      this.send({ t: 'team', to: p.id, a: 'ok' });
+      this.joinTeam(p);
+      return;
+    }
+    this.asked.set(p.id, now);
+    this.send({ t: 'team', to: p.id, a: 'ask' });
+    ui.toast(`Team request sent to ${p.name}. They accept by walking up to you and pressing E.`, 'info');
+  }
+
+  joinTeam(p) {
+    this.team.add(p.id); this.teamAsk.delete(p.id); this.asked.delete(p.id);
+    p.setMate(true);
+    G.ui.toast(`You teamed up with ${p.name}! You can see each other anywhere on the map, and your weapons won't hurt each other.`, 'good');
+  }
+
+  onTeam(m, from) {
+    const now = performance.now();
+    if (m.a === 'ask') {
+      if (this.team.has(from.id)) return;
+      // we had already asked them: that's a yes from both sides
+      if (this.asked.has(from.id) && now - this.asked.get(from.id) < 60000) { this.send({ t: 'team', to: from.id, a: 'ok' }); this.joinTeam(from); return; }
+      this.teamAsk.set(from.id, now);
+      G.ui.toast(`${from.name} wants to team up with you. Walk up to them and press E to accept.`, 'info');
+    } else if (m.a === 'ok') {
+      if (this.asked.has(from.id) && !this.team.has(from.id)) this.joinTeam(from);
+    } else if (m.a === 'bye') {
+      if (this.team.delete(from.id)) { from.setMate(false); G.ui.toast(`${from.name} left your team.`, 'warn'); }
+    }
+  }
+
   // ---------- player vs player ----------
   raycastPlayers(o, d, maxDist) {
     let best = null;
     for (const p of this.players.values()) {
       if (p.dead || !p.seen || p.inBed) continue;
       const base = p.pos.y - (p.swimming ? 1.15 : 0), dn = p.crouch ? 0.32 : 0;
-      for (const [y, r, part] of [[0.5, 0.22, 'legs'], [1.2, 0.3, 'body'], [1.68, 0.16, 'head']]) {
-        const cx = p.pos.x - o.x, cy = base + y - (part === 'legs' ? dn * 0.5 : dn) - o.y, cz = p.pos.z - o.z;
+      // lying down: head where they are, body and legs stretched out behind
+      const bx = Math.sin(p.yaw), bz = Math.cos(p.yaw);
+      const parts = p.prone ? [[0.2, 0.2, 'legs', 1.15], [0.2, 0.26, 'body', 0.5], [0.25, 0.15, 'head', -0.05]] : [[0.5, 0.22, 'legs', 0], [1.2, 0.3, 'body', 0], [1.68, 0.16, 'head', 0]];
+      for (const [y, r, part, back] of parts) {
+        const cx = p.pos.x + bx * back - o.x, cy = base + y - (p.prone ? 0 : part === 'legs' ? dn * 0.5 : dn) - o.y, cz = p.pos.z + bz * back - o.z;
         const tc = cx * d.x + cy * d.y + cz * d.z;
         if (tc < 0) continue;
         const d2 = cx * cx + cy * cy + cz * cz - tc * tc;
@@ -312,6 +422,11 @@ export class Net {
   }
 
   hitPlayer(p, power, part, pellets = 1) {
+    if (this.team.has(p.id)) {
+      const now = performance.now();
+      if (!this.mateWarnT || now - this.mateWarnT > 3000) { this.mateWarnT = now; G.ui.toast(`${p.name} is on your team — your weapons can't hurt them.`, 'warn'); }
+      return;
+    }
     const table = DAMAGE[power] || DAMAGE.rifle;
     const dmg = Math.round(table[part] * pellets * G.equipment.dmgMult(power));
     this.send({ t: 'hitP', to: p.id, dmg, part, w: power, x: r2(G.player.pos.x), z: r2(G.player.pos.z) });
@@ -321,7 +436,7 @@ export class Net {
 
   takeHit(m, from) {
     const S = G.survival;
-    if (S.dead) return;
+    if (S.dead || (from && this.team.has(from.id))) return;
     const who = from ? from.name : 'another hunter';
     this.lastHit = { from: m.from, t: performance.now(), w: m.w };
     S.damage(m.dmg, { x: m.x, z: m.z }, m.w === 'knife' ? `Stabbed by ${who}` : `Shot by ${who} with a ${WEAPON_NAME[m.w] || 'gun'}`);

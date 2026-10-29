@@ -1063,7 +1063,7 @@ export class Equipment {
       return;
     }
     a.hit(e.part, G.player.pos);
-    if (!a.isBird) G.net?.down(a, e.part);
+    if (!a.isBird) G.net?.down(a, e.part); else G.net?.birdDown(a);
     G.stats.hits++;
     const clean = e.part === 'vitals' || e.part === 'head' || e.part === 'neck';
     const entry = {

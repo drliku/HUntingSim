@@ -131,7 +131,37 @@ async function boot() {
   if (world.clutter) for (const c of world.clutter.chunks) post.reflection.hidden.push(...c.meshes);
   world.env.camRef = camera;
   // draw one frame: through the post-processing chain when it is on, directly otherwise
+  // Shadows are redrawn every other frame: the shadow map follows the player and the sun moves
+  // slowly, so the difference can't be seen, and it halves one of the biggest costs per frame.
+  renderer.shadowMap.autoUpdate = false;
+  let shadowFrame = 0;
+  // Automatic resolution: when the graphics card can't keep up (frames too slow while the CPU side
+  // is quick), render at a slightly lower resolution; step back up when there's room again.
+  const dyn = { scale: 1, ema: 16.7, cpu: 4, coolT: 3, goodT: 0, failAt: 0 };
+  G.dynRes = dyn;
+  const applyScale = () => {
+    const base = Math.min(window.devicePixelRatio, (QUALITY[settings.quality] || QUALITY.medium).pixelRatio);
+    renderer.setPixelRatio(base * dyn.scale);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    post.setSize(window.innerWidth, window.innerHeight);
+  };
+  G.updateDynRes = (frameMs, cpuMs) => {
+    dyn.ema += (Math.min(frameMs, 50) - dyn.ema) * 0.05;
+    dyn.cpu += (cpuMs - dyn.cpu) * 0.05;
+    if ((dyn.coolT -= frameMs / 1000) > 0 || document.hidden) return;
+    const gpuBound = dyn.cpu < dyn.ema * 0.6;
+    if (dyn.ema > 17.6 && gpuBound && dyn.scale > 0.65) {
+      // too slow: drop the resolution a notch
+      dyn.scale = Math.max(0.65, +(dyn.scale - 0.1).toFixed(2)); dyn.failAt = dyn.scale + 0.1;
+      applyScale(); dyn.coolT = 2; dyn.goodT = 0;
+    } else if (dyn.ema < 17.2 && dyn.scale < 1) {
+      // steady at full speed for a while: try a notch sharper (not straight back to one that failed)
+      dyn.goodT += frameMs / 1000;
+      if (dyn.goodT > (dyn.scale + 0.1 >= dyn.failAt ? 20 : 6)) { dyn.scale = Math.min(1, +(dyn.scale + 0.1).toFixed(2)); applyScale(); dyn.coolT = 3; dyn.goodT = 0; }
+    } else dyn.goodT = 0;
+  };
   const renderFrame = (showWeapon) => {
+    if (renderer.shadowMap.enabled && (shadowFrame++ % 2 === 0)) renderer.shadowMap.needsUpdate = true;
     if (post.enabled) { post.update(world.env); post.render(showWeapon); return; }
     renderer.clear();
     renderer.render(scene, camera);
@@ -148,8 +178,25 @@ async function boot() {
   world.update(0.016, camera.position);
   animals.update(0.016);
   birds.update(0.016);
-  renderer.compile(scene, camera);
+  // compile every shader now, including things that are hidden at the moment (distant trees, animals
+  // out of sight, crates…), and their shadow versions, so nothing stalls the first time it comes into view
+  {
+    const hiddenNow = [];
+    scene.traverse((o) => { if (!o.visible) { hiddenNow.push(o); o.visible = true; } });
+    const counts = [];
+    scene.traverse((o) => { if (o.isInstancedMesh && o.count === 0) { counts.push(o); o.count = 1; } });
+    renderer.compile(scene, camera);
+    renderer.shadowMap.needsUpdate = true;
+    renderer.render(scene, camera);
+    counts.forEach((o) => { o.count = 0; });
+    hiddenNow.forEach((o) => { o.visible = false; });
+  }
+  renderer.shadowMap.needsUpdate = true;
   renderer.render(scene, camera);
+  // scenery that never moves (vegetation, rocks, ground clutter, terrain): thousands of objects that
+  // would otherwise have their matrices walked every frame
+  scene.updateMatrixWorld(true);
+  for (const o of scene.children) if (!o.matrixAutoUpdate && !o.children.length) o.matrixWorldAutoUpdate = false;
   ui.setLoading(1, 'Ready');
   await nextFrame();
   ui.showMainMenu();
@@ -157,8 +204,9 @@ async function boot() {
   // ---- quality / resize ----
   G.applyQuality = () => {
     const qq = QUALITY[settings.quality];
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, qq.pixelRatio));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, qq.pixelRatio) * G.dynRes.scale);
     renderer.shadowMap.enabled = qq.shadows;
+    renderer.shadowMap.needsUpdate = true;
     SurfaceDetail.enabled = !!qq.post;
     world.env.sun.castShadow = qq.shadows;
     if (world.env.sun.shadow.map) { world.env.sun.shadow.map.dispose(); world.env.sun.shadow.map = null; }
@@ -450,8 +498,7 @@ async function boot() {
   // PvP world step without the player's own controls (menus open, dead, or tab hidden)
   function pvpSimulate(dt) {
     world.update(dt, camera.position);
-    if (!G.net.isHost) animals.netUpdate(dt); else animals.update(dt);
-    birds.update(dt);
+    if (!G.net.isHost) { animals.netUpdate(dt); birds.netUpdate(dt); } else { animals.update(dt); birds.update(dt); }
     crates.update(dt);
     drops.update(dt);
     airdrops.update(dt, world.env.wind);
@@ -476,17 +523,22 @@ async function boot() {
 
   // A thrown error must not wedge the game: keys would stay "pressed" and the frame would
   // keep failing at the same spot. Log it once, clear the frame's input and carry on.
-  let frameErrors = 0;
+  let frameErrors = 0, lastCpuMs = 4;
   function frame() {
     requestAnimationFrame(frame);
-    try { frameBody(); } catch (err) {
+    const t0 = performance.now();
+    try { frameBody(); lastCpuMs = performance.now() - t0; } catch (err) {
       frameErrors++;
       if (frameErrors <= 3) console.error('Frame error (the game keeps running):', err);
       if (frameErrors === 1) ui.toast('Something went wrong for a moment; the game recovered. If it keeps happening, try a lower graphics setting.', 'warn');
       try { input.endFrame(); } catch { /* ignore */ }
     }
   }
+  let prevFrameStart = 0;
   function frameBody() {
+    const frameStart = performance.now();
+    if (prevFrameStart && G.started && !G.inMainMenu && !G.menuOpen) G.updateDynRes(frameStart - prevFrameStart, lastCpuMs);
+    prevFrameStart = frameStart;
     lastFrameAt = performance.now();
     const dt = Math.min(clock.getDelta(), 0.05);
     if (G.sleep) {
@@ -563,8 +615,7 @@ async function boot() {
       if (input.wasPressed('KeyE') && interaction && interaction.kind !== 'fire-unlit' && interaction.kind !== 'chop' && interaction.kind !== 'airdrop') doInteraction();
       world.update(dt, camera.position);
       ambient.update(dt, camera.position, world.env, 1, world.veg);
-      if (G.net && !G.net.isHost) animals.netUpdate(dt); else animals.update(dt);
-      birds.update(dt);
+      if (G.net && !G.net.isHost) { animals.netUpdate(dt); birds.netUpdate(dt); } else { animals.update(dt); birds.update(dt); }
       poachers.update(dt);
       crates.update(dt);
       drops.update(dt);

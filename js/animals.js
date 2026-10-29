@@ -1265,9 +1265,20 @@ export class AnimalManager {
         a.pos.y = G.world.groundAt(a.pos.x, a.pos.z, a.pos.y + 0.3);
         a.syncTransform(); a.animate(dt, cd);
       }
-      a.rig.root.visible = cd < (a.sp.model.shoulderH < 0.45 ? Math.min(viewDist, 140) : viewDist);
-      a.rig.setLod(cd > 60 ? 1 : 0);
+      this.cull(a, cd, viewDist);
     }
+  }
+
+  // draw an animal only within sight (small ones closer; big ones stay visible in a scope at range),
+  // skip all matrix work while hidden (hitSpheres refreshes it when a shot needs it);
+  // only the nearby ones cast shadows (the shadow map only covers ~55 m anyway)
+  cull(a, cd, viewDist) {
+    const r = a.rig.root;
+    r.visible = cd < (a.sp.model.shoulderH < 0.45 ? Math.min(viewDist, 140) : viewDist);
+    r.matrixWorldAutoUpdate = r.visible;
+    a.rig.setLod(cd > 60 ? 1 : 0);
+    const sh = cd < 45;
+    if (a.shadowOn !== sh) { a.shadowOn = sh; r.traverse((o) => { if (o.isMesh) o.castShadow = sh; }); }
   }
 
   clearAll() {
@@ -1281,8 +1292,7 @@ export class AnimalManager {
       const a = this.list[i];
       const cd = Math.hypot(a.pos.x - cam.x, a.pos.z - cam.z);
       a.update(dt, cd);
-      a.rig.root.visible = cd < (a.sp.model.shoulderH < 0.45 ? Math.min(viewDist, 140) : viewDist);
-      a.rig.setLod(cd > 60 ? 1 : 0);
+      this.cull(a, cd, viewDist);
     }
     // Population maintenance
     this.popTimer -= dt;

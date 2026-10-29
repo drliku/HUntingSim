@@ -23,7 +23,7 @@ export class WaterReflection {
   setQuality(q) {
     this.enabled = !!q.post;
     this.scale = q.msaa >= 4 ? 0.5 : 0.35;
-    this.every = q.msaa >= 4 ? 1 : 2;   // Medium refreshes the reflection every other frame
+    this.every = q.msaa >= 4 ? 2 : 3;   // the reflection refreshes every 2nd (High) or 3rd (Medium) frame
   }
 
   setSize(w, h) { this.target.setSize(Math.max(2, Math.round(w * this.scale)), Math.max(2, Math.round(h * this.scale))); }

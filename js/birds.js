@@ -13,6 +13,10 @@ const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
 let nextId = 1;
 const rnd = (a, b) => a + Math.random() * (b - a);
 
+// PvP: the host's game runs the birds and streams them; everyone else mirrors them
+export const BIRD_STATES = ['ground', 'swim', 'wade', 'perch', 'soar', 'fly', 'down'];
+let nextNid = 1;
+
 class Bird {
   constructor(mgr, id, male) {
     this.mgr = mgr;
@@ -144,9 +148,15 @@ class Bird {
     const d = Math.hypot(P.pos.x - this.pos.x, P.pos.z - this.pos.z);
     this.playerDist = d;
     if (this.state === 'fly' || this.state === 'down' || this.state === 'soar') return;
-    let k = P.moving ? (P.sprinting ? 1.5 : P.crouch ? 0.6 : 1) : (P.crouch ? 0.35 : 0.55);
-    if (this.state === 'perch') k *= 0.7;
-    if (d < this.b.flush * k) this.flush(P.pos.x, P.pos.z);
+    // every hunter in the game can flush them (in PvP the host's game runs the birds for everyone)
+    const hunters = [{ pos: P.pos, moving: P.moving, sprint: P.sprinting, crouch: P.crouch || P.prone }];
+    if (G.net) for (const p of G.net.players.values()) if (p.seen && !p.dead && !p.inBed) hunters.push({ pos: p.pos, moving: p.moving, sprint: p.sprint, crouch: p.crouch || p.prone });
+    for (const h of hunters) {
+      const dh = Math.hypot(h.pos.x - this.pos.x, h.pos.z - this.pos.z);
+      let k = h.moving ? (h.sprint ? 1.5 : h.crouch ? 0.6 : 1) : (h.crouch ? 0.35 : 0.55);
+      if (this.state === 'perch') k *= 0.7;
+      if (dh < this.b.flush * k) { this.flush(h.pos.x, h.pos.z); return; }
+    }
   }
 
   update(dt, camDist) {
@@ -282,7 +292,10 @@ class Bird {
       if (nightCall === night || b.call === 'honk') G.audio?.birdCall(b.call, this.pos);
     }
 
-    // animation
+    this.animate(dt, camDist, open, flapAmp, pitch, roll);
+  }
+
+  animate(dt, camDist, open, flapAmp, pitch, roll) {
     if (this.state !== 'down' && camDist < 160) {
       this.wingOpen = damp(this.wingOpen, open, 6, dt);
       const rate = clamp(14 - this.m.wingSpan * 5, 3, 13);
@@ -295,6 +308,33 @@ class Bird {
     }
     this.rig.root.position.copy(this.pos);
     this.rig.root.rotation.y = this.heading;
+  }
+
+  // PvP, not the host: follow the host's bird and animate it from its state
+  netStep(dt, camDist) {
+    const n = this.net;
+    this.stateT += dt;
+    const px = this.pos.x, pz = this.pos.z;
+    if (n) {
+      if (Math.hypot(n.x - this.pos.x, n.y - this.pos.y, n.z - this.pos.z) > 25) this.pos.set(n.x, n.y, n.z);
+      else { const k = Math.min(1, dt * 6); this.pos.x += (n.x - this.pos.x) * k; this.pos.y += (n.y - this.pos.y) * k; this.pos.z += (n.z - this.pos.z) * k; }
+      this.heading = dampAngle(this.heading, n.h, 6, dt);
+    }
+    const sp = Math.hypot(this.pos.x - px, this.pos.z - pz) / Math.max(dt, 1e-3);
+    let open = 0, flapAmp = 0, pitch = 0, roll = 0;
+    const st = this.state;
+    if (st === 'fly') { open = 1; flapAmp = sp < 4 ? 0.9 : 0.65; }
+    else if (st === 'soar') { open = 1; flapAmp = Math.sin(this.stateT * 0.35 + this.uid) > 0.85 ? 0.55 : 0.04; roll = -0.35; }
+    else if (st === 'ground') pitch = sp < 0.15 && Math.sin(this.stateT * 6 + this.uid) > 0.4 ? 0.45 : 0;
+    else if (st === 'swim') pitch = sp < 0.1 && Math.sin(this.stateT * 0.8 + this.uid) > 0.7 ? 1.1 : 0;
+    else if (st === 'wade') pitch = Math.sin(this.stateT * 0.5 + this.uid) > 0.93 ? 0.9 : 0;
+    this.callT -= dt;
+    if (this.callT <= 0) {
+      this.callT = rnd(20, 70);
+      const night = G.env.daylight < 0.15;
+      if ((this.b.activity === 'nocturnal') === night || this.b.call === 'honk') G.audio?.birdCall(this.b.call, this.pos);
+    }
+    this.animate(dt, camDist, open, flapAmp, pitch, roll);
   }
 
   updateDown(dt) {
@@ -354,6 +394,7 @@ class Bird {
 
 export class BirdManager {
   constructor(scene, world) {
+    this.byNid = new Map();
     this.scene = scene;
     this.world = world;
     this.T = world.terrain;
@@ -462,6 +503,8 @@ export class BirdManager {
   }
 
   // --- spawning and pooling ---
+  get authority() { return !G.net || G.net.isHost; }
+
   acquire(id, male) {
     const key = id + (male ? 'm' : 'f');
     const arr = this.pool[key] || (this.pool[key] = []);
@@ -469,6 +512,7 @@ export class BirdManager {
   }
 
   release(bd) {
+    if (bd.nid !== undefined) { this.byNid.delete(bd.nid); if (this.authority) G.net?.queueBirdDespawn(bd.nid); }
     bd.despawn();
     const i = this.list.indexOf(bd);
     if (i >= 0) this.list.splice(i, 1);
@@ -486,6 +530,9 @@ export class BirdManager {
       bd.spawn(x + rnd(-4, 4), z + rnd(-4, 4), flock);
       if (flock) flock.members.push(bd);
       this.list.push(bd);
+      bd.nid = nextNid++;
+      this.byNid.set(bd.nid, bd);
+      G.net?.queueBirdSpawn(bd);
     }
   }
 
@@ -526,6 +573,7 @@ export class BirdManager {
   }
 
   soundEvent(x, z, radius, kind) {
+    if (!this.authority) return; // the host's game decides which birds take off
     for (const b of this.list) {
       if (b.state === 'down') continue;
       const d = Math.hypot(b.pos.x - x, b.pos.z - z);
@@ -551,6 +599,61 @@ export class BirdManager {
     return best;
   }
 
+  spawnInfo(b) {
+    return { n: b.nid, s: b.species, m: b.male ? 1 : 0, x: Math.round(b.pos.x * 100) / 100, y: Math.round(b.pos.y * 100) / 100, z: Math.round(b.pos.z * 100) / 100,
+      h: Math.round(b.heading * 100) / 100, st: BIRD_STATES.indexOf(b.state), sc: Math.round(b.scale * 1000) / 1000, w: Math.round(b.weight * 100) / 100, ag: b.age };
+  }
+
+  netSpawn(list) {
+    for (const i of list) {
+      if (this.byNid.has(i.n)) continue;
+      const bd = this.acquire(i.s, !!i.m);
+      bd.spawn(i.x, i.z, null);
+      bd.nid = i.n; this.byNid.set(i.n, bd);
+      bd.scale = i.sc; bd.rig.root.scale.setScalar(i.sc);
+      bd.weight = i.w; bd.age = i.ag;
+      bd.pos.set(i.x, i.y, i.z); bd.heading = i.h;
+      bd.setState(BIRD_STATES[i.st] || 'ground');
+      bd.net = { x: i.x, y: i.y, z: i.z, h: i.h };
+      this.list.push(bd);
+    }
+  }
+
+  netApply(arr) {
+    for (const [n, x, y, z, h, st] of arr) {
+      const b = this.byNid.get(n);
+      if (!b || b.state === 'down') continue;
+      b.net = { x, y, z, h };
+      const s = BIRD_STATES[st];
+      if (s && s !== b.state) b.setState(s);
+    }
+  }
+
+  netDespawn(nids) { for (const n of nids) { const b = this.byNid.get(n); if (b) this.release(b); } }
+
+  // someone shot a bird: it comes down on every screen (only the shooter gets the harvest)
+  netDown(m) {
+    const b = this.byNid.get(m.n);
+    if (!b || b.state === 'down') return;
+    b.pos.set(m.x, m.y, m.z);
+    b.hit('body', { x: m.sx, z: m.sz });
+    b.popupShown = true;
+  }
+
+  // PvP, not the host: no AI or spawning here, just mirror the host's birds
+  netUpdate(dt) {
+    const cam = G.camera.position;
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const b = this.list[i];
+      const cd = Math.hypot(b.pos.x - cam.x, b.pos.z - cam.z);
+      if (b.state === 'down') { b.stateT += dt; b.updateDown(dt); if (!b.active) continue; b.rig.root.position.copy(b.pos); }
+      else b.netStep(dt, cd);
+      const big = b.m.wingSpan > 1.2 || b.state === 'soar';
+      b.rig.root.visible = cd < (big ? 420 : 150);
+      b.rig.root.matrixWorldAutoUpdate = b.rig.root.visible;
+    }
+  }
+
   update(dt) {
     const cam = G.camera.position;
     for (let i = this.list.length - 1; i >= 0; i--) {
@@ -559,6 +662,7 @@ export class BirdManager {
       b.update(dt, cd);
       const big = b.m.wingSpan > 1.2 || b.state === 'soar';
       b.rig.root.visible = cd < (big ? 420 : 150);
+      b.rig.root.matrixWorldAutoUpdate = b.rig.root.visible;
     }
     this.popTimer -= dt;
     if (this.popTimer <= 0) {

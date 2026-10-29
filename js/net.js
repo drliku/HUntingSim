@@ -7,6 +7,7 @@ import { G } from './state.js';
 import { DEFAULT_LOOK, sanitizeLook, lookColor, loadLook } from './avatar.js';
 import { makeAvatar, hunterReady } from './hunterModel.js';
 import { giveToPack, describe, isEmpty } from './drops.js';
+import { BIRD_STATES } from './birds.js';
 
 // Replace Math.random with a seeded generator (so every player builds the same forest).
 // Returns a function that puts the real Math.random back.
@@ -171,7 +172,7 @@ export class Net {
     this.id = 0;
     this.players = new Map();
     this.meT = 0; this.worldT = 0;
-    this.spawnQ = []; this.despawnQ = [];
+    this.spawnQ = []; this.despawnQ = []; this.bSpawnQ = []; this.bDespawnQ = []; this.birdT = 0;
     this.kills = 0; this.deaths = 0;
     this.lastHit = null;
     this.connected = false;
@@ -205,7 +206,7 @@ export class Net {
         { const c = this.myHouse(); if (c) G.player.teleport(c.x + c.dx, c.z + c.D / 2 + 2.2); }
         for (const p of m.players) if (p.id !== this.id) this.players.set(p.id, new RemotePlayer(p.id, p.name));
         if (this.isHost) G.crates.fill(); // PvP has more crates than solo play
-        if (!this.isHost) { A.clearAll(); A.byNid.clear(); }
+        if (!this.isHost) { A.clearAll(); A.byNid.clear(); G.birds.clearAll(); G.birds.byNid.clear(); }
         this.sendLook();
         ui.toast(this.isHost
           ? `You are hosting PvP game ${this.code}. Friends join from the main menu with this code. Other hunters are dangerous — and so is the wildlife.`
@@ -246,6 +247,10 @@ export class Net {
       case 'spawn': if (!this.isHost) A.netSpawn(m.list); break;
       case 'despawn': if (!this.isHost) A.netDespawn(m.n); break;
       case 'down': A.netDown(m); break;
+      case 'bspawn': if (!this.isHost) G.birds.netSpawn(m.list); break;
+      case 'bdespawn': if (!this.isHost) G.birds.netDespawn(m.n); break;
+      case 'bworld': if (!this.isHost) G.birds.netApply(m.b); break;
+      case 'bdown': G.birds.netDown(m); break;
       case 'spook': if (this.isHost) { const a = A.byNid.get(m.n); if (a && a.state !== 'down') { if (m.w) a.wounded = true; if (a.state === 'attack') a.endAttack(); else a.flee(m.x, m.z, true); } } break;
       case 'noise': if (this.isHost) A.soundEvent(m.x, m.z, m.r, m.k); break;
       case 'call': if (this.isHost) A.callEvent(m.x, m.z); break;
@@ -283,6 +288,7 @@ export class Net {
     this.send({
       t: 'sync', to,
       animals: G.animals.list.filter((a) => a.state !== 'down').map((a) => this.spawnInfo(a)),
+      birds: G.birds.list.filter((b) => b.state !== 'down' && b.nid !== undefined).map((b) => G.birds.spawnInfo(b)),
       doors: W.doors.map((d) => (d.open ? 1 : 0)),
       fires: W.fires.map((f) => [f.lit ? 1 : 0, r2(f.fuel)]),
       picked: G.forage.nodes.map((n, i) => (n.picked ? i : -1)).filter((i) => i >= 0),
@@ -299,6 +305,7 @@ export class Net {
     G.env.time = m.time; G.env.day = m.day;
     if (m.wx) G.env.setWeather(m.wx, true);
     G.animals.netSpawn(m.animals);
+    G.birds.clearAll(); G.birds.netSpawn(m.birds || []);
     m.doors.forEach((o, i) => { if (W.doors[i]) W.setDoor(W.doors[i], !!o); });
     m.fires.forEach(([lit, fuel], i) => { const f = W.fires[i]; if (f) { f.lit = !!lit; f.fuel = fuel; } });
     for (const i of m.picked) { const n = G.forage.nodes[i]; if (n && !n.picked) G.forage.pick(n); }
@@ -314,6 +321,8 @@ export class Net {
 
   queueSpawn(list) { if (this.isHost) for (const a of list) this.spawnQ.push(a); }
   queueDespawn(nid) { if (this.isHost) this.despawnQ.push(nid); }
+  queueBirdSpawn(b) { if (this.isHost) this.bSpawnQ.push(b); }
+  queueBirdDespawn(nid) { if (this.isHost) this.bDespawnQ.push(nid); }
 
   // ---------- every frame ----------
   tick(dt) {
@@ -333,6 +342,16 @@ export class Net {
     if (!this.isHost) return;
     if (this.spawnQ.length) { this.send({ t: 'spawn', list: this.spawnQ.filter((a) => a.active).map((a) => this.spawnInfo(a)) }); this.spawnQ = []; }
     if (this.despawnQ.length) { this.send({ t: 'despawn', n: this.despawnQ }); this.despawnQ = []; }
+    // birds: new flocks, birds gone, and every bird's position and behaviour 10 times a second
+    if (this.bSpawnQ.length) { this.send({ t: 'bspawn', list: this.bSpawnQ.filter((b) => b.active).map((b) => G.birds.spawnInfo(b)) }); this.bSpawnQ = []; }
+    if (this.bDespawnQ.length) { this.send({ t: 'bdespawn', n: this.bDespawnQ }); this.bDespawnQ = []; }
+    this.birdT -= dt;
+    if (this.birdT <= 0) {
+      this.birdT = 0.1;
+      const b = [];
+      for (const bd of G.birds.list) if (bd.state !== 'down' && bd.nid !== undefined) b.push([bd.nid, r2(bd.pos.x), r2(bd.pos.y), r2(bd.pos.z), r2(bd.heading), BIRD_STATES.indexOf(bd.state)]);
+      this.send({ t: 'bworld', b });
+    }
     this.worldT -= dt;
     if (this.worldT <= 0) {
       this.worldT = 0.1;
@@ -358,6 +377,7 @@ export class Net {
   down(a, part) {
     this.send({ t: 'down', n: a.nid, part, px: r2(a.pos.x), pz: r2(a.pos.z), h: a.heading, side: a.downSide, run: a.runOff, sx: r2(G.player.pos.x), sz: r2(G.player.pos.z) });
   }
+  birdDown(b) { if (b.nid !== undefined) this.send({ t: 'bdown', n: b.nid, x: r2(b.pos.x), y: r2(b.pos.y), z: r2(b.pos.z), sx: r2(G.player.pos.x), sz: r2(G.player.pos.z) }); }
   // an animal attacking another player (host only)
   damage(p, amount, cause, from) { this.send({ t: 'dmg', to: p.id, amount, cause, x: r2(from.x), z: r2(from.z) }); }
   warn(p, text) { this.send({ t: 'warn', to: p.id, text }); }

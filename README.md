@@ -31,7 +31,7 @@ PvP needs the game's own server, so it does not work on the shared claude.ai pag
 3. Friends open that address, choose **PvP survival**, type the code and press **Join game**. Up to 6 players.
 4. To play over the internet instead of Wi-Fi, forward the port on the host's router or use a tunnel (for example `cloudflared tunnel --url http://localhost:8080`) and share that address.
 
-How it plays: survival rules on medium with $120 and a knife, and no poachers — the other hunters are the danger. Everyone shares one forest: the same wildlife, time, weather, doors, campfires, wild food, bait and cabin upgrades (birds are the exception: each player sees their own flocks). Players wear coloured vests with name tags. A gunshot shows the shooter on everyone's minimap for a few seconds. Hits are scored by body part (head, body, legs) per weapon. When you die you respawn far from the others with a knife and $40; whoever killed you takes your money. Sleep does not skip time in PvP — you rest in real time, faster in bed. Hold **Tab** for the scoreboard.
+How it plays: survival rules on medium with $120 and a knife, and no poachers — the other hunters are the danger. Everyone shares one forest: the same wildlife (ground animals and birds alike: the host's game runs them and streams them to everyone, and any player walking up to a flock makes it take off for all), time, weather, doors, campfires, wild food, bait and cabin upgrades. A bird shot by anyone comes down on every screen; only the shooter gets the harvest. Players wear coloured vests with name tags. A gunshot shows the shooter on everyone's minimap for a few seconds. Hits are scored by body part (head, body, legs) per weapon. When you die you respawn far from the others with a knife and $40; whoever killed you takes your money. Sleep does not skip time in PvP — you rest in real time, faster in bed. Hold **Tab** for the scoreboard.
 
 **Teams:** walk up to another hunter and press **E** to ask them to team up; they accept by walking up to you and pressing **E**. Teammates see each other anywhere on the map (a green marker with name and distance that shows through trees and walls, plus a green dot on the minimap and the map), and their weapons can't hurt each other. Press **E** next to a teammate to leave the team.
 
@@ -149,12 +149,19 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers �
 
 ## Performance notes
 
-- Vegetation is instanced and split into chunks; whole chunks are culled by distance and by the camera frustum, and grass only renders near the player.
+- Vegetation is instanced and split into chunks; whole chunks are culled by distance and by the camera frustum. Trees have three levels of detail: a small set of fully detailed trees (with leaf cards) only within about 38 m (55 m on High), refreshed as you move and hidden from their chunk so nothing is drawn twice; lighter models in the middle distance; and coarse canopies past about 60 m.
+- Grass only renders within 75 m and thins out with distance (full density up to 30 m, a quarter at the edge); flowers show within 45 m and leaf litter only up close.
+- Scenery that never moves (thousands of vegetation, rock and clutter meshes) is skipped in the per-frame matrix update, as are animals and birds that are out of sight. Only animals within 45 m cast shadows, and shopkeepers are only drawn and animated within 60 m of their store.
+- Shadows are redrawn every other frame, and the water reflection every 3rd frame on Medium (every 2nd on High).
+- Every shader, including those of things hidden at load and their shadow versions, is compiled while the game loads, so nothing stutters the first time it comes into view.
+- **Automatic resolution:** if the graphics card can't hold about 57 fps (frames slow while the CPU side is quick), the game renders at a slightly lower resolution, in 10% steps down to 65%, and steps back up when there's room again.
 - Every animal is 7 meshes sharing a single vertex-coloured material. Leg animation and AI updates are reduced with distance, and animals are pooled and reused.
 - Footprints are ring-buffered instanced decals drawn with a tiny custom shader.
 - Rain and snow are animated entirely on the GPU, and clouds are drawn inside the sky shader.
 - Shadows come from a single directional light that follows the player.
 - The quality presets (Low / Medium / High in the pause menu) change resolution, shadows, grass density and view distance.
+
+On an RTX 3060 at Medium the CPU side of a frame takes a median of about 5–6 ms (down from 8–10 ms), and the triangles drawn per frame dropped from about 2 million to about 1.2 million.
 
 Simulating 200 s of world time with about 45 animals takes well under 1 s of CPU time.
 

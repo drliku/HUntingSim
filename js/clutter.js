@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { colorize, mergeColored, xf } from './geo.js';
 import { mulberry32 } from './utils.js';
 
-const CHUNK = 20, SHOW = 26;
+const CHUNK = 32, SHOW = 12; // bigger chunks = fewer draw calls; tiny things only show up close
 const UP = new THREE.Vector3(0, 1, 0);
 
 function flatShape(pts, color, y = 0) {
@@ -73,20 +73,20 @@ export class GroundClutter {
   constructor(scene, terrain, half) {
     this.scene = scene;
     this.chunks = [];
-    this.geos = { leaves: [leafPatch(1), leafPatch(2), leafPatch(3)], pebbles: pebbles(4), cones: pinecones(5), shrooms: [mushrooms(6), mushrooms(7)] };
+    this.geos = { leaves: [leafPatch(1), leafPatch(2)], pebbles: pebbles(4), cones: pinecones(5), shrooms: [mushrooms(6), mushrooms(7)] };
     this.mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     const T = terrain, m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sv = new THREE.Vector3(), pv = new THREE.Vector3();
     const n = Math.ceil((half * 2) / CHUNK);
     for (let cz = 0; cz < n; cz++) for (let cx = 0; cx < n; cx++) {
       const r = mulberry32(9100 + cz * 131 + cx);
       const x0 = -half + cx * CHUNK, z0 = -half + cz * CHUNK;
-      const lists = { leaves0: [], leaves1: [], leaves2: [], pebbles: [], cones: [], shrooms0: [], shrooms1: [] };
-      for (let i = 0; i < 260; i++) {
+      const lists = { leaves0: [], leaves1: [], pebbles: [], cones: [], shrooms0: [], shrooms1: [] };
+      for (let i = 0; i < 660; i++) {
         const x = x0 + r() * CHUNK, z = z0 + r() * CHUNK, h = T.getHeight(x, z);
         if (h < 0.25) continue;
         const d = T.densityAt(x, z), trail = T.trailAt(x, z), roll = r();
         const it = { x, y: h, z, s: 0.75 + r() * 0.6, a: r() * 6.28 };
-        if (roll < d * 0.85 + 0.04) lists['leaves' + (i % 3)].push(it);
+        if (roll < d * 0.85 + 0.04) lists['leaves' + (i % 2)].push(it);
         else if ((trail < 2.5 && roll < 0.5) || (h < 1.4 && roll < 0.45) || roll > 0.995) lists.pebbles.push(it);
         else if (d > 0.4 && roll > 0.96) lists.cones.push(it);
         else if (d > 0.55 && roll > 0.94 && roll < 0.95) lists['shrooms' + (i % 2)].push(it);

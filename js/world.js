@@ -509,6 +509,13 @@ export class World {
     for (const st of this.stores) {
       const inside = this.isInside(st.bounds, px, pz);
       const av = st.vendor.userData.avatar;
+      // open hours decide whether the shopkeeper is there; being indoors, they can't be seen from
+      // further away, so they are only drawn and animated when you're near
+      if (open) st.closed = false;
+      else { st.closed = true; if (!inside) { st.present = false; if (st.door.open) this.setDoor(st.door, false); } }
+      if (open) st.present = true;
+      const near = Math.hypot(st.bounds.x - px, st.bounds.z - pz) < 60;
+      st.vendor.visible = st.present !== false && near;
       if (av && st.vendor.visible) {
         let want = st.vendorRot, pitch = 0, lookYaw = 0;
         // shopkeepers keep busy when nobody is in: wiping the counter, hands on hips, looking
@@ -539,12 +546,6 @@ export class World {
         st.vendor.rotation.y += (want - st.vendor.rotation.y) * (drawn ? 0.3 : 0.08);
         av.update(dt || 0.016, { pitch, lookYaw, aim: drawn ? 1 : 0, draw: 0, item: drawn ? st.guard : 'none', moving: false, crouch: false, dead: false, swimming: false });
       }
-      if (open) { st.closed = false; st.vendor.visible = true; continue; }
-      st.closed = true;
-      if (!inside) {
-        st.vendor.visible = false;
-        if (st.door.open) this.setDoor(st.door, false);
-      }
     }
   }
 
@@ -553,7 +554,7 @@ export class World {
     let best = null;
     for (const st of this.stores) {
       const v = st.vendor;
-      if (!v.visible) continue;
+      if (st.present === false) continue;
       for (const [y, r] of [[0.5, 0.24], [1.05, 0.3], [1.58, 0.17]]) {
         const cx = v.position.x - o.x, cy = v.position.y + y - o.y, cz = v.position.z - o.z;
         const tc = cx * d.x + cy * d.y + cz * d.z;

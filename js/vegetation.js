@@ -26,13 +26,13 @@ function makePine(rng) {
   return mergeColored(parts);
 }
 
-function makeBroadleaf(rng) {
+function makeBroadleaf(rng, detail = 1) {
   const parts = [];
   parts.push(colorize(xf(new THREE.CylinderGeometry(0.16, 0.3, 3.4, 7), 0, 1.7, 0), 0x51402e));
   parts.push(colorize(xf(new THREE.CylinderGeometry(0.06, 0.1, 1.6, 5), 0.5, 3.4, 0, 0, 0, -0.7), 0x51402e));
   const blobs = [[0, 4.6, 0, 1.9], [1.0, 4.1, 0.6, 1.4], [-0.9, 4.3, -0.5, 1.5], [0.2, 5.6, -0.2, 1.3], [-0.3, 4.0, 1.0, 1.2]];
   blobs.forEach((b, i) => {
-    const g = new THREE.IcosahedronGeometry(b[3], 1);
+    const g = new THREE.IcosahedronGeometry(b[3] * (detail ? 1 : 1.08), detail);
     xf(g, b[0], b[1], b[2], 0, 0, 0, 1, 0.85, 1);
     jitterVertices(g, 0.35, i * 7 + 1);
     parts.push(shadeVertical(colorize(g, [0x3b5e27, 0x46692c, 0x3f6329][i % 3], 0.15, rng), 0.65, 1.15));
@@ -40,7 +40,7 @@ function makeBroadleaf(rng) {
   return mergeColored(parts);
 }
 
-function makeBirch(rng) {
+function makeBirch(rng, detail = 1) {
   const parts = [];
   const trunk = colorize(xf(new THREE.CylinderGeometry(0.09, 0.15, 6, 6, 6), 0, 3, 0), 0xdcd8cc);
   // dark lenticel bands
@@ -53,7 +53,7 @@ function makeBirch(rng) {
   parts.push(trunk);
   const blobs = [[0, 6.2, 0, 1.3], [0.6, 5.3, 0.3, 1.0], [-0.5, 5.5, -0.3, 1.0], [0.1, 4.6, 0.5, 0.8]];
   blobs.forEach((b, i) => {
-    const g = new THREE.IcosahedronGeometry(b[3], 1);
+    const g = new THREE.IcosahedronGeometry(b[3] * (detail ? 1 : 1.08), detail);
     xf(g, b[0], b[1], b[2], 0, 0, 0, 0.9, 1.1, 0.9);
     jitterVertices(g, 0.3, i * 3 + 11);
     parts.push(shadeVertical(colorize(g, [0x6f8c34, 0x7a963a][i % 2], 0.15, rng), 0.7, 1.15));
@@ -432,6 +432,10 @@ export class Vegetation {
       bush: makeBush(rng), rock: makeRock(rng),
     };
     this.geos.fern = makeFern(); this.geos.log = makeLog(); this.geos.stump = makeStump();
+    // coarse canopies for trees far away (their own random stream, so the seeded world layout is unchanged)
+    { let s = 977; const rf = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+      this.geosFar = { broad: makeBroadleaf(rf, 0), birch: makeBirch(rf, 0) }; }
+    this.farDist = 30; // chunk distance past which trees use the coarse canopies (about 60 m out)
     this.geosHi = { pine: makePineHi(), broad: makeBroadleafHi(), birch: makeBirchHi(), bush: makeBushHi(), rock: makeRockHi(), fern: this.geos.fern, log: this.geos.log, stump: this.geos.stump };
     this.fernMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.fernMat.userData.noDetail = true;
@@ -568,26 +572,37 @@ export class Vegetation {
       mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
       this.scene.add(mesh);
-      let cards = null;
-      const cg = this.cardGeos && this.cardGeos[b.type];
-      if (cg) {
-        cards = new THREE.InstancedMesh(cg, b.type === 'pine' ? this.needleMat : b.type === 'bush' ? this.bushLeafMat : this.leafMat, b.items.length);
-        cards.instanceMatrix.array.set(mesh.instanceMatrix.array);
-        cards.instanceMatrix.needsUpdate = true;
-        if (mesh.instanceColor) cards.instanceColor = mesh.instanceColor;
-        cards.computeBoundingSphere();
-        cards.castShadow = b.type !== 'bush';
-        cards.receiveShadow = true;
-        cards.matrixAutoUpdate = false;
-        cards.visible = false;
-        this.scene.add(cards);
-      }
       this.chunks.push({
-        mesh, cards, type: b.type, hi: false,
+        mesh, cards: null, type: b.type, items: b.items, lod: 1,
         x: -HALF + (b.cx + 0.5) * CHUNK, z: -HALF + (b.cz + 0.5) * CHUNK,
         small: b.type === 'bush' || b.type === 'rock' || b.type === 'fern' || b.type === 'log' || b.type === 'stump',
       });
     }
+
+    // Detailed trees only close to the player: every so often the trees within reach are copied
+    // into these small instanced sets (detailed model + leaf cards) and hidden in their chunk, so
+    // the full detail costs a few dozen trees instead of every tree in the nearest 80 m chunks.
+    this.nearSets = {};
+    for (const type of ['pine', 'broad', 'birch', 'bush', 'rock']) {
+      const cap = 700;
+      const mat = type === 'rock' ? this.material : type === 'bush' ? this.bushMat : this.treeMat;
+      const mesh = new THREE.InstancedMesh(this.geosHi[type], mat, cap);
+      mesh.setColorAt(0, col.setRGB(1, 1, 1));
+      mesh.count = 0; mesh.frustumCulled = false; mesh.matrixAutoUpdate = false;
+      mesh.castShadow = type !== 'bush'; mesh.receiveShadow = true;
+      this.scene.add(mesh);
+      let cards = null;
+      const cg = this.cardGeos && this.cardGeos[type];
+      if (cg) {
+        cards = new THREE.InstancedMesh(cg, type === 'pine' ? this.needleMat : type === 'bush' ? this.bushLeafMat : this.leafMat, cap);
+        cards.instanceColor = mesh.instanceColor;
+        cards.count = 0; cards.frustumCulled = false; cards.matrixAutoUpdate = false;
+        cards.castShadow = type !== 'bush'; cards.receiveShadow = true;
+        this.scene.add(cards);
+      }
+      this.nearSets[type] = { mesh, cards, cap };
+    }
+    this.nearAt = null; this.nearR = -1; this.nearT = 0;
 
     // Grass + flowers in small chunks shown near the player
     const nG = Math.ceil((HALF * 2) / GRASS_CHUNK);
@@ -659,7 +674,7 @@ export class Vegetation {
       for (let i = 0; i < mesh.instanceMatrix.count; i++) {
         mesh.getMatrixAt(i, m4);
         m4.decompose(p, q, sc);
-        if (Math.hypot(p.x - x, p.z - z) < r) { mesh.setMatrixAt(i, zero); if (c.cards) c.cards.setMatrixAt(i, zero); changed = true; }
+        if (Math.hypot(p.x - x, p.z - z) < r) { mesh.setMatrixAt(i, zero); if (c.orig) zero.toArray(c.orig, i * 16); if (c.cards) c.cards.setMatrixAt(i, zero); changed = true; }
       }
       if (changed) { mesh.instanceMatrix.needsUpdate = true; if (c.cards) c.cards.instanceMatrix.needsUpdate = true; }
     }
@@ -686,11 +701,15 @@ export class Vegetation {
     let src = null;
     for (const c of this.chunks) {
       if (c.type !== it.type || Math.abs(c.x - it.x) > CHUNK / 2 + 0.5 || Math.abs(c.z - it.z) > CHUNK / 2 + 0.5) continue;
+      const from = c.orig || c.mesh.instanceMatrix.array;
       for (let i = 0; i < c.mesh.count && !src; i++) {
-        c.mesh.getMatrixAt(i, m4); p.setFromMatrixPosition(m4);
+        m4.fromArray(from, i * 16); p.setFromMatrixPosition(m4);
         if (Math.abs(p.x - it.x) < 0.02 && Math.abs(p.z - it.z) < 0.02) {
           src = m4.clone();
           c.mesh.setMatrixAt(i, zero); c.mesh.instanceMatrix.needsUpdate = true;
+          if (c.orig) zero.toArray(c.orig, i * 16);
+          if (c.hidden) c.hidden.delete(i);
+          this.nearAt = null; // rebuild the near set without it
           if (c.cards) { c.cards.setMatrixAt(i, zero); c.cards.instanceMatrix.needsUpdate = true; }
         }
       }
@@ -742,7 +761,8 @@ export class Vegetation {
   }
 
   setGrassDensity(f) {
-    for (const g of this.grassChunks) g.mesh.count = Math.floor(g.mesh.userData.total * f);
+    this.grassDensity = f;
+    for (const g of this.grassChunks) { g.lod = -1; g.mesh.count = Math.floor(g.mesh.userData.total * f); }
   }
 
   update(dt, camPos, viewDist, wind) {
@@ -754,15 +774,63 @@ export class Vegetation {
     for (const c of this.chunks) {
       const d = Math.hypot(c.x - camPos.x, c.z - camPos.z) - CHUNK * 0.71;
       c.mesh.visible = d < (c.type === 'fern' ? 40 : c.small ? viewDist * 0.6 : viewDist);
-      const hi = d < this.hiDist;
-      if (hi !== c.hi) { c.hi = hi; c.mesh.geometry = hi ? this.geosHi[c.type] : this.geos[c.type]; }
-      if (c.cards) c.cards.visible = c.mesh.visible && hi;
+      const lod = d > this.farDist && this.geosFar[c.type] ? 0 : 1;
+      if (lod !== c.lod) { c.lod = lod; c.mesh.geometry = lod === 0 ? this.geosFar[c.type] : this.geos[c.type]; }
     }
-    const gd = 75;
+    // refresh the detailed trees around the player when they've moved a few metres
+    const nr = this.hiDist < 0 ? 0 : this.hiDist >= 30 ? 55 : 38;
+    this.nearT -= dt;
+    if (!this.nearAt || nr !== this.nearR || (this.nearT <= 0 && Math.hypot(camPos.x - this.nearAt.x, camPos.z - this.nearAt.z) > 3)) {
+      this.nearT = 0.25;
+      this.updateNear(camPos, nr);
+    }
+    // grass: full density up close, thinning to a quarter at the edge of the grass ring, where a
+    // tuft covers a pixel or two (the tufts are shuffled, so any prefix is evenly spread)
+    const gd = 75, dens = this.grassDensity ?? 1;
     for (const g of this.grassChunks) {
-      const d = Math.hypot(g.x - camPos.x, g.z - camPos.z) - GRASS_CHUNK * 0.71;
+      const dc = Math.hypot(g.x - camPos.x, g.z - camPos.z);
+      const d = dc - GRASS_CHUNK * 0.71;
       g.mesh.visible = d < gd;
-      if (g.flowers) g.flowers.visible = d < gd * 0.8;
+      if (g.flowers) g.flowers.visible = d < 45;
+      if (!g.mesh.visible) continue;
+      const lod = Math.round(Math.min(1, Math.max(0, (dc - 30) / 55)) * 6) / 6;
+      if (lod !== g.lod) { g.lod = lod; g.mesh.count = Math.floor(g.mesh.userData.total * dens * (1 - lod * 0.75)); }
+    }
+  }
+
+  updateNear(cam, R) {
+    this.nearAt = { x: cam.x, z: cam.z }; this.nearR = R;
+    const fill = {};
+    for (const t in this.nearSets) fill[t] = 0;
+    const R2 = R * R;
+    for (const c of this.chunks) {
+      const set = this.nearSets[c.type];
+      if (!set) continue;
+      const close = R > 0 && Math.abs(c.x - cam.x) < CHUNK / 2 + R && Math.abs(c.z - cam.z) < CHUNK / 2 + R;
+      if (!close && !(c.hidden && c.hidden.size)) continue;
+      if (!c.orig) { c.orig = c.mesh.instanceMatrix.array.slice(); c.hidden = new Set(); }
+      const live = c.mesh.instanceMatrix.array, orig = c.orig, colors = c.mesh.instanceColor && c.mesh.instanceColor.array;
+      const dst = set.mesh.instanceMatrix.array, dcol = set.mesh.instanceColor.array;
+      let changed = false;
+      for (let i = 0; i < c.items.length; i++) {
+        const it = c.items[i], o = i * 16;
+        const gone = orig[o] === 0 && orig[o + 5] === 0 && orig[o + 10] === 0; // felled or cleared
+        const near = close && !gone && fill[c.type] < set.cap && (it.x - cam.x) ** 2 + (it.z - cam.z) ** 2 < R2;
+        if (near) {
+          if (!c.hidden.has(i)) { c.hidden.add(i); live.fill(0, o, o + 16); changed = true; }
+          const k = fill[c.type]++;
+          dst.set(orig.subarray(o, o + 16), k * 16);
+          if (colors) { dcol[k * 3] = colors[i * 3]; dcol[k * 3 + 1] = colors[i * 3 + 1]; dcol[k * 3 + 2] = colors[i * 3 + 2]; }
+        } else if (c.hidden.has(i)) { c.hidden.delete(i); live.set(orig.subarray(o, o + 16), o); changed = true; }
+      }
+      if (changed) c.mesh.instanceMatrix.needsUpdate = true;
+    }
+    for (const t in this.nearSets) {
+      const st = this.nearSets[t], n = fill[t];
+      st.mesh.count = n;
+      st.mesh.instanceMatrix.needsUpdate = true;
+      st.mesh.instanceColor.needsUpdate = true;
+      if (st.cards) { st.cards.count = n; st.cards.instanceMatrix.array.set(st.mesh.instanceMatrix.array.subarray(0, n * 16)); st.cards.instanceMatrix.needsUpdate = true; }
     }
   }
 

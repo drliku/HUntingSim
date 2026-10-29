@@ -10,7 +10,8 @@ import { RARITY, RARITY_WEAPONS, UPGRADE_PRICE } from './rarity.js';
 import { WEATHER } from './environment.js';
 import { LOCATIONS } from './world.js';
 import { Stage } from './stage.js';
-import { Avatar, LOOK_OPTIONS, LOOK_LABELS, loadLook, saveLook, randomLook, lookColor, sanitizeLook } from './avatar.js';
+import { LOOK_OPTIONS, LOOK_LABELS, loadLook, saveLook, randomLook, lookColor, sanitizeLook } from './avatar.js';
+import { makeAvatar, hunterReady } from './hunterModel.js';
 import { yawToBearing, compassName, formatClock, clamp, smoothstep } from './utils.js';
 import { HALF, WORLD_SIZE } from './terrain.js';
 import { S } from './animals.js';
@@ -1442,7 +1443,7 @@ export class UI {
     const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 20);
     camera.position.set(0, 1.25, 4.4);
     camera.lookAt(0, 1.0, 0);
-    const avatar = new Avatar(loadLook());
+    const avatar = makeAvatar(loadLook());
     scene.add(avatar.root);
     const c = { renderer, scene, camera, avatar, look: loadLook(), item: 'rifle', aim: false, yaw: 0.5, drag: null, t: 0 };
     c.resize = () => {
@@ -1486,7 +1487,9 @@ export class UI {
     const c = this.cust;
     const swatch = (hex) => (hex !== undefined ? `<i class="sw" style="background:#${hex.toString(16).padStart(6, '0')}"></i>` : '');
     $('custom-opts').innerHTML = Object.keys(LOOK_OPTIONS).map((k) => {
-      if (k === 'hatColor' && c.look.hat === 'none') return '';
+      if (k === 'hatColor' && c.look.hat === 'none' && !c.avatar.isModel) return '';
+      // the hunter model has its own cap, hair, beard and pack
+      if (c.avatar.isModel && (k === 'hat' || k === 'hair' || k === 'beard' || k === 'pack')) return '';
       return `<div class="cust-row"><h4>${LOOK_LABELS[k]}</h4><div class="chips">${LOOK_OPTIONS[k].map(([id, label, hex]) => `<button class="chip ${c.look[k] === id ? 'on' : ''}" data-look="${k}" data-val="${id}">${swatch(hex)}${label}</button>`).join('')}</div></div>`;
     }).join('');
     const items = [['rifle', 'Rifle'], ['shotgun', 'Shotgun'], ['pistol', 'Revolver'], ['bow', 'Bow'], ['knife', 'Knife'], ['binoculars', 'Binoculars']];
@@ -1499,6 +1502,7 @@ export class UI {
     if (!c) return;
     c.t += dt;
     if (c.drag === null) c.yaw += dt * 0.25;
+    if (!c.avatar.isModel && hunterReady()) { c.scene.remove(c.avatar.root); c.avatar.dispose(); c.avatar = makeAvatar(c.look); c.scene.add(c.avatar.root); this.renderCustomOptions(); }
     c.avatar.root.rotation.y = c.yaw;
     const drawing = c.aim && c.item === 'bow';
     c.avatar.update(dt, { pitch: c.aim ? 0.05 : 0, aim: c.aim ? 1 : 0, draw: drawing ? 1 : 0, item: c.item, tier: G.equipment && G.equipment.owned[c.item] ? G.equipment.tier(c.item) : 0, moving: false, crouch: false, dead: false, swimming: false });

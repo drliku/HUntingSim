@@ -4,7 +4,8 @@
 // the victim, whose game applies the damage. All players build the same world from a shared seed.
 import * as THREE from 'three';
 import { G } from './state.js';
-import { Avatar, DEFAULT_LOOK, sanitizeLook, lookColor, loadLook } from './avatar.js';
+import { DEFAULT_LOOK, sanitizeLook, lookColor, loadLook } from './avatar.js';
+import { makeAvatar, hunterReady } from './hunterModel.js';
 
 // Replace Math.random with a seeded generator (so every player builds the same forest).
 // Returns a function that puts the real Math.random back.
@@ -57,7 +58,7 @@ class RemotePlayer {
     this.id = id;
     this.name = name;
     this.look = { ...DEFAULT_LOOK };
-    this.avatar = new Avatar(this.look);
+    this.avatar = makeAvatar(this.look);
     this.root = this.avatar.root;
     this.setTag();
     this.pos = new THREE.Vector3(0, -50, 0);
@@ -67,6 +68,17 @@ class RemotePlayer {
     this.dead = false; this.moving = false; this.visibility = 0.5; this.noise = 0.2;
     this.inBed = false; this.inCabinSafe = false; this.swimming = false;
     this.kills = 0; this.deaths = 0; this.shotAt = 0; this.seen = false;
+    G.scene.add(this.root);
+  }
+
+  // swap the built-in avatar for the hunter model once it has loaded
+  rebuildAvatar() {
+    G.scene.remove(this.root);
+    this.root.remove(this.tag);
+    this.avatar.dispose();
+    this.avatar = makeAvatar(this.look);
+    this.root = this.avatar.root;
+    this.root.add(this.tag);
     G.scene.add(this.root);
   }
 
@@ -114,12 +126,13 @@ class RemotePlayer {
     this.target.set(m.x, m.y, m.z);
     if (!this.seen) { this.pos.copy(this.target); this.seen = true; }
     this.yaw = m.yaw; this.pitch = m.p || 0; this.aim = m.a || 0; this.draw = m.d || 0; this.tier = m.r || 0;
-    this.crouch = !!m.c; this.prone = !!m.pr; this.hidden = !!m.hd; this.item = m.it; this.hp = m.hp;
+    this.crouch = !!m.c; this.prone = !!m.pr; this.sprint = !!m.sp; this.hidden = !!m.hd; this.item = m.it; this.hp = m.hp;
     this.dead = !!m.dead; this.moving = !!m.mv; this.visibility = m.vis; this.noise = m.no;
     this.inBed = !!m.bed; this.inCabinSafe = !!m.safe; this.swimming = !!m.sw;
   }
 
   update(dt) {
+    if (!this.avatar.isModel && hunterReady()) this.rebuildAvatar();
     this.pos.lerp(this.target, Math.min(1, dt * 12));
     this.eye.set(this.pos.x, this.pos.y + (this.prone ? 0.42 : this.crouch ? 1.15 : 1.6), this.pos.z);
     const r = this.root;
@@ -128,7 +141,7 @@ class RemotePlayer {
     if (this.swimming) r.position.y -= 1.15;
     if (this.dead) r.position.y += 0.25;
     r.rotation.y = this.yaw + Math.PI;
-    this.avatar.update(dt, { pitch: this.pitch, aim: this.aim, draw: this.draw, item: this.item, tier: this.tier, moving: this.moving, crouch: this.crouch, prone: this.prone, dead: this.dead, swimming: this.swimming });
+    this.avatar.update(dt, { pitch: this.pitch, aim: this.aim, draw: this.draw, item: this.item, tier: this.tier, moving: this.moving, sprint: this.sprint, crouch: this.crouch, prone: this.prone, dead: this.dead, swimming: this.swimming });
     // lying down: the body stretches out behind the head instead of standing on the spot
     const pa = this.avatar.proneAmt;
     if (pa > 0.001) { r.position.x += Math.sin(this.yaw) * 1.5 * pa; r.position.z += Math.cos(this.yaw) * 1.5 * pa; r.position.y += 0.15 * pa; }
@@ -295,7 +308,7 @@ export class Net {
     if (this.meT <= 0) {
       this.meT = 1 / 15;
       this.send({
-        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch && !P.prone ? 1 : 0, pr: P.prone ? 1 : 0, hd: P.hidden ? 1 : 0,
+        t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch && !P.prone ? 1 : 0, pr: P.prone ? 1 : 0, sp: P.sprinting ? 1 : 0, hd: P.hidden ? 1 : 0,
         a: Math.round(G.equipment.aim * 10) / 10, d: G.equipment.item === 'bow' ? Math.round((G.equipment.draw || 0) * 10) / 10 : 0, r: G.equipment.tier(G.equipment.item),
         it: G.equipment.item, hp: Math.round(S.health), dead: S.dead ? 1 : 0, mv: P.moving ? 1 : 0,
         vis: r2(P.visibility || 0.5), no: r2(P.noise || 0), bed: P.inBed ? 1 : 0, safe: P.inCabinSafe ? 1 : 0, sw: P.swimming ? 1 : 0,

@@ -43,7 +43,7 @@ export function randomLook() {
 
 // ---------- third-person items (origin = where the right hand grips; +z = forward) ----------
 let flashTex = null;
-function muzzleFlash(z, y = 0.02, s = 0.45) {
+export function muzzleFlash(z, y = 0.02, s = 0.45) {
   if (!flashTex) {
     const cv = document.createElement('canvas'); cv.width = cv.height = 64;
     const ctx = cv.getContext('2d');
@@ -59,7 +59,7 @@ function muzzleFlash(z, y = 0.02, s = 0.45) {
 const box = (w, h, d, x, y, z, c, rx = 0, ry = 0, rz = 0) => colorize(xf(new THREE.BoxGeometry(w, h, d), x, y, z, rx, ry, rz), c);
 
 const ITEM_GEO = {};
-function tieredGeometry(id, tier) {
+export function tieredGeometry(id, tier) {
   const key = id + ':' + tier;
   if (ITEM_GEO[key]) return ITEM_GEO[key];
   const base = itemGeometry(id);
@@ -77,7 +77,7 @@ function itemGeometry(id) {
 
 // Weapon placement relative to the shoulders: 'aim' follows the view, 'low' is the carry position.
 // R / L = where each hand grips, in the item's own space (null = that hand hangs at the side).
-const POSE = {
+export const POSE = {
   rifle: { aim: [[0.12, -0.03, 0.0], [0, 0, 0]], low: [[0.14, -0.34, 0.22], [0.42, -0.72, 0.45]], R: [0, -0.07, 0.25], L: [0, -0.02, 0.66], flash: 1.2, flashY: 0.028 },
   shotgun: { aim: [[0.12, -0.02, 0.0], [0, 0, 0]], low: [[0.14, -0.34, 0.22], [0.42, -0.72, 0.45]], R: [0, -0.06, 0.28], L: [0, -0.012, 0.76], flash: 1.18, flashY: 0.022 },
   pistol: { aim: [[0.02, -0.04, 0.52], [0, 0, 0]], low: [[0.24, -0.66, 0.14], [1.2, 0, 0]], R: [0, -0.01, 0], L: [-0.02, -0.03, -0.01], lAimOnly: true, flash: 0.24, flashY: 0.055 },
@@ -88,7 +88,7 @@ const POSE = {
   call: { aim: [[0.24, -0.58, 0.14], [0.3, 0, 0]], low: [[0.24, -0.58, 0.14], [0.3, 0, 0]], R: [0, 0.0, 0.0] },
   none: { aim: [[0, -0.5, 0.2], [0, 0, 0]], low: [[0, -0.5, 0.2], [0, 0, 0]], R: null, L: null },
 };
-const SHOULDER_Y = 1.46;
+export const SHOULDER_Y = 1.46;
 const HIP_Y = 0.95, THIGH = 0.45, SHIN = 0.42;
 const UP = new THREE.Vector3(0, 1, 0);
 const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _m3 = new THREE.Matrix4();
@@ -124,7 +124,7 @@ function setSeg(mesh, a, b) {
 }
 
 // cloth gets a woven grain and a soft sheen at the edges; faces a much finer one
-const vcMat = enhanceMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }), { grain: 0.11, freq: 75, rim: 0.32 });
+export const vcMat = enhanceMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }), { grain: 0.11, freq: 75, rim: 0.32 });
 const headMat = enhanceMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), { grain: 0.04, freq: 110, rim: 0.22 });
 const _c = new THREE.Color(), _c2 = new THREE.Color();
 const mixHex = (a, b, t) => _c.setHex(a).lerp(_c2.setHex(b), Math.max(0, Math.min(1, t))).getHex();

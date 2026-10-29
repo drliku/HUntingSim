@@ -20,7 +20,7 @@ node server.js 8080
 Then open <http://localhost:8080>. Any static server works too (for example `npx serve` or `python -m http.server 8080`).
 
 Three.js r160 loads from the jsDelivr CDN, so the first launch needs an internet connection. Everything else
-(models, textures and sounds) is generated procedurally at startup, so there are no asset downloads.
+(models, textures and sounds) is generated procedurally at startup. The one exception is the hunter character other players see: a rigged 3D model (`models/hunter.glb`, about 1.6 MB) with motion-captured animations (`models/hunter-anims.json`). Until it loads, or if it can't, the built-in procedural hunter is used.
 
 ## PvP survival (play with friends)
 
@@ -104,7 +104,8 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers â€
 ## Models
 
 - **Smooth lofted models:** animals are built from continuous lofted shapes (body with chest, tucked waist and rump; head with skull, brow and snout; tapered legs; leaf-shaped ears; curved antlers and ridged horns) with fur shading, eye highlights, nostrils, toes, claws and split hooves painted or modelled in. Animals more than about 60 m away switch to a lighter version of the same model.
-- **Hunters:** smooth shaped torso with collar, zip, chest and hand-warmer pockets, seams, a rolled-up hood and a belt with buckle, shading baked into the folds; a face with eyelids, irises, pupils and catchlights, brows, cheeks, lips, nostrils, ears and sideburns; smooth hats; jointed arms with gloved hands; trousers with cargo pockets and knee panels; laced boots; and legs with real knees (crouching bends the knees, lying down stretches you out flat and crawls). Hair colour is one of the Customize hunter options.
+- **Hunter model:** in PvP and the Customize preview, hunters are a detailed rigged model in a camo suit with a backpack, binoculars and pouches, animated with motion-captured idle, walk, run and crouch-walk cycles retargeted onto its skeleton. The head and chest follow where the player is looking, the cheek drops onto the stock when aiming a long gun, both hands reach for the weapon's grips (two-bone IK), and lying down stretches the body out flat with the weapon held forward. Customize still works: the jacket, trousers and cap are dyed your chosen colours over the camo pattern (choose Forest camo for the suit as it is), and the skin tone changes the face and hands. Hat style, hair, beard and backpack options apply to the built-in hunter (shopkeepers and the fallback).
+- **Built-in hunters:** smooth shaped torso with collar, zip, chest and hand-warmer pockets, seams, a rolled-up hood and a belt with buckle, shading baked into the folds; a face with eyelids, irises, pupils and catchlights, brows, cheeks, lips, nostrils, ears and sideburns; smooth hats; jointed arms with gloved hands; trousers with cargo pockets and knee panels; laced boots; and legs with real knees (crouching bends the knees, lying down stretches you out flat and crawls). Hair colour is one of the Customize hunter options.
 - **Cloth and fur:** clothes, gloves and animal coats have a fine woven or furry grain and a soft sheen around their outline, so they read as fabric and fur rather than smooth plastic.
 - **Weapons:** detailed rifle (shaped stock with checkering, bolt, scope with turrets and lens), shotgun (vent rib, grooved pump, ejection port), revolver (fluted cylinder, hammer, ejector rod), laminated recurve bow, drop-point knife and armoured binoculars. Other players hold the same detailed models.
 - **Trees and plants:** nearby pines have drooping, star-edged branch layers; broadleaf trees and birches have branching trunks and sunlit crowns; bushes, mossy rocks and curved grass blades. Distant trees use simpler models, and the detailed ones are off on the Low graphics setting.
@@ -167,6 +168,9 @@ js/vegetation.js    Instanced chunked trees, bushes, rocks, grass, colliders
 js/environment.js   Sky, sun/moon, day-night, weather, precipitation, water
 js/firefx.js        Campfire flames, sparks, smoke and coals
 js/matfx.js         Cloth and fur grain and silhouette sheen for characters and animals
+js/hunterModel.js   The hunter character model: loading, animation blending, aim, grip IK, prone pose and colour dyes
+models/hunter.glb   Rigged hunter model (textures cropped to the area the UVs use)
+models/hunter-anims.json  Idle, walk, run and crouch-walk clips retargeted from Mixamo onto the hunter rig
 js/world.js         World assembly, cabin, stand, campfire, collisions, locations
 js/species.js       Field guide data, model proportions, behaviour tuning
 js/animalModel.js   Procedural animal rigs

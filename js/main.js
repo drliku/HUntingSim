@@ -18,6 +18,7 @@ import { DIFFICULTY, FREE_ROAM, STORES } from './modes.js';
 import { CabinUpgrades } from './upgrades.js';
 import { Net, seedRandom } from './net.js';
 import { loadLook, lookColor } from './avatar.js';
+import { loadHunter } from './hunterModel.js';
 import { Crates } from './loot.js';
 import { PostFX } from './post.js';
 import { Ambient } from './ambient.js';
@@ -104,6 +105,7 @@ async function boot() {
   const forage = new ForageManager(scene, world);
   G.forage = forage;
   if (unseed) unseed();
+  loadHunter(); // the hunter model other players see (loads in the background)
   const crates = new Crates(scene, world);
   G.crates = crates;
   G.mode = 'free';

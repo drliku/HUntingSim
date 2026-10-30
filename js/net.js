@@ -244,6 +244,7 @@ export class Net {
       case 'chat': if (from && typeof m.text === 'string') G.ui.chatLine({ name: from.name, color: from.mate ? '#7dff9a' : '#' + lookColor('jacket', from.look.jacket).toString(16).padStart(6, '0') }, m.text.slice(0, 140)); break;
       case 'team': if (from) this.onTeam(m, from); break;
       case 'bag': if (m.a === 'set') G.drops.set(m.id, m.x, m.z, m.c, m.o); else G.drops.remove(m.id, false); break;
+      case 'trap': if (m.a === 'set') G.traps.netSet(m); else G.traps.remove(m.id, false); break;
       case 'gift': this.onGift(m, from); break;
       case 'airdrop':
         if (m.a === 'add') G.airdrops.add(m.id, m.x, m.z, 0);
@@ -310,7 +311,7 @@ export class Net {
       upgrades: Object.keys(G.cabin.built),
       crates: G.crates.activeList(),
       baits: W.baits.filter((b) => b.active).map((b) => [r2(b.x), r2(b.z)]),
-      bags: G.drops.list(), airdrops: G.airdrops.list(),
+      bags: G.drops.list(), airdrops: G.airdrops.list(), traps: G.traps.list(),
       time: G.env.time, day: G.env.day, wx: G.env.weatherName,
     });
   }
@@ -332,6 +333,8 @@ export class Net {
     for (const b of m.bags || []) G.drops.set(b.id, b.x, b.z, b.c, b.o, b.t);
     G.airdrops.clear();
     for (const d of m.airdrops || []) G.airdrops.add(d.id, d.x, d.z, d.t, false);
+    G.traps.clear();
+    for (const t of m.traps || []) G.traps.set(t);
   }
 
   queueSpawn(list) { if (this.isHost) for (const a of list) this.spawnQ.push(a); }

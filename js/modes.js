@@ -25,7 +25,7 @@ export const FREE_ROAM = {
 // What the butcher pays per kg of raw meat (cooked meat fetches 40% more)
 export const MEAT_PRICE = {
   Venison: 6, 'Elk meat': 7, 'Moose meat': 6, 'Pronghorn meat': 7, 'Wild mutton': 7, 'Bison meat': 8, 'Wild boar meat': 5,
-  'Bear meat': 5, 'Rabbit meat': 8, Turkey: 9, Duck: 9, Goose: 8, Grouse: 10, Pigeon: 6, Dove: 10,
+  'Bear meat': 5, 'Rabbit meat': 8, 'Beaver meat': 6, Turkey: 9, Duck: 9, Goose: 8, Grouse: 10, Pigeon: 6, Dove: 10,
 };
 
 export const STORES = {
@@ -54,6 +54,9 @@ export const STORES = {
     items: [
       { id: 'bait', name: 'Deer corn bait ×2', price: 8, desc: 'Place it (key 7) and herbivores come to feed over the next day.', ammo: 'bait', count: 2 },
       { id: 'call', name: 'Grunt call', price: 15, desc: 'Brings curious deer and elk closer (key 8). Predators may come too.', once: true },
+      { id: 'trap-s', name: 'Small traps ×2', price: 16, desc: 'Body-grip traps (key 9): kill rabbits, beavers, raccoons and badgers outright.', ammo: 'trapS', count: 2 },
+      { id: 'trap-m', name: 'Medium foothold trap', price: 22, desc: 'Holds foxes, coyotes, lynx and wolves until you come to finish them.', ammo: 'trapM', count: 1 },
+      { id: 'trap-l', name: 'Large trap', price: 45, desc: 'Heavy toothed trap that holds deer, boar, bears, cougars, pronghorn and bighorn sheep.', ammo: 'trapL', count: 1 },
       { id: 'beans', name: 'Can of beans', price: 6, desc: '+35 food.' },
       { id: 'bandage', name: 'Bandage', price: 12, desc: 'Restores 30 health.' },
       { id: 'medkit', name: 'First-aid kit', price: 35, desc: 'Restores 70 health and treats poisoning (activated charcoal).' },

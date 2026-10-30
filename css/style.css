@@ -275,6 +275,10 @@ select option { background: #1a1d1b; }
 .pk-give { font-size: 12px; opacity: 0.75; margin: 2px 0 8px; }
 .pk-give.mate { color: #7dff9a; opacity: 1; }
 .btn.small.give { opacity: 0.85; }
+.map-trap { position: absolute; width: 10px; height: 10px; margin: -5px; border-radius: 50%; background: #c8c4b8; border: 2px solid #111; }
+.map-trap.sprung { background: #f0b040; }
+.map-trap.caught { background: #ff4a3a; box-shadow: 0 0 10px #ff4a3a; animation: adpulse 0.7s ease-in-out infinite alternate; }
+.map-trap span { position: absolute; left: 50%; top: -19px; transform: translateX(-50%); white-space: nowrap; font-size: 11px; font-weight: 700; color: #e8e2d4; text-shadow: 0 1px 3px #000; }
 .map-mate { position: absolute; width: 12px; height: 12px; margin: -6px; border-radius: 50%; background: #50e070; border: 2px solid #0c1a0e; box-shadow: 0 0 6px #50e070; }
 .map-mate.dead { background: #8a8a8a; box-shadow: none; }
 .map-mate span { position: absolute; left: 50%; top: -20px; transform: translateX(-50%); white-space: nowrap; font-size: 12px; font-weight: 700; color: #7dff9a; text-shadow: 0 1px 3px #000; }

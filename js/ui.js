@@ -6,6 +6,7 @@ import { PORTION_KG, CARRY_KG, WOOD_HOURS, MAX_FUEL } from './survival.js';
 import { STORES, MEAT_PRICE, priceOf, DIFFICULTY } from './modes.js';
 import { FORAGE } from './forage.js';
 import { ITEMS, WEAPONS } from './equipment.js';
+import { TRAP_KINDS, TRAP_ORDER } from './traps.js';
 import { RARITY, RARITY_WEAPONS, UPGRADE_PRICE } from './rarity.js';
 import { WEATHER } from './environment.js';
 import { LOCATIONS } from './world.js';
@@ -240,7 +241,11 @@ export class UI {
     const nameHtml = tierNow >= 0 ? `<span style="color:${RARITY[tierNow].css}">${RARITY[tierNow].name}</span> ${Wp.name}` : Wp.name;
     if (this._itemName !== nameHtml) { this.el['item-name'].innerHTML = nameHtml; this._itemName = nameHtml; }
     const am = eq.ammo[eq.item];
-    if (Wp.gun) {
+    if (eq.item === 'trap') {
+      this.el.ammo.style.display = '';
+      this.el['ammo-mag'].textContent = G.sandbox.infiniteAmmo ? '∞' : eq.ammo[eq.trapSize].reserve;
+      this.el['ammo-res'].textContent = `${TRAP_KINDS[eq.trapSize].size} traps · right-click: size`;
+    } else if (Wp.gun) {
       this.el.ammo.style.display = '';
       this.el['ammo-mag'].textContent = eq.reloadT > 0 && !Wp.perShell ? '…' : am.mag;
       this.el['ammo-res'].textContent = G.sandbox.infiniteAmmo ? '∞' : am.reserve;
@@ -261,7 +266,8 @@ export class UI {
       const sh = tr ? `inset 0 -2px 0 ${RARITY[tr].css}` : '';
       if (sl.style.boxShadow !== sh) sl.style.boxShadow = sh;
       const a = eq.ammo[id];
-      const txt = !eq.owned[id] || !a ? '' : WEAPONS[id].gun ? String(a.mag + a.reserve) : String(a.reserve);
+      const txt = id === 'trap' ? (eq.owned.trap ? String(TRAP_ORDER.reduce((n, k) => n + eq.ammo[k].reserve, 0)) : '')
+        : !eq.owned[id] || !a ? '' : WEAPONS[id].gun ? String(a.mag + a.reserve) : String(a.reserve);
       const c = sl.querySelector('.cnt');
       if (c && c.textContent !== txt) c.textContent = txt;
     });
@@ -362,6 +368,16 @@ export class UI {
     for (const p of G.poachers.threats()) {
       const [mx, my] = toMini(p.pos.x, p.pos.z);
       ctx.beginPath(); ctx.arc(mx, my, 4, 0, Math.PI * 2); ctx.fillStyle = '#e04040'; ctx.fill();
+    }
+    if (G.traps) for (const t of G.traps.traps.values()) {
+      if (!G.traps.ours(t)) continue;
+      let [mx, my] = toMini(t.x, t.z);
+      const dx = mx - S / 2, dy = my - S / 2, dd = Math.hypot(dx, dy), rim = S / 2 - 5;
+      const busy = t.state !== 'set';
+      if (dd > rim) { if (!busy) continue; mx = S / 2 + dx / dd * rim; my = S / 2 + dy / dd * rim; }
+      ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = t.state === 'caught' ? '#ff4a3a' : t.state === 'sprung' ? '#f0b040' : '#c8c4b8';
+      ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#111'; ctx.stroke(); ctx.lineWidth = 1;
     }
     if (G.crates) for (const c of G.crates.spots) {
       if (!c.active) continue;
@@ -514,7 +530,11 @@ export class UI {
       const btns = (am.reserve > 0 ? this.giveBtns('ammo', g, [[Math.min(5, am.reserve) + ' ammo', 5]]) : '') + (E.owned[g] ? this.giveBtns('gun', g, [['weapon', 1]]) : '');
       rows.push(`<div class="meat-row"><span>${label} <small>${am.reserve} spare ${WEAPONS[g].ammo}</small></span><span class="acts">${btns}</span></div>`);
     }
-    return rows.length ? '<h4>Weapons</h4>' + rows.join('') : '';
+    for (const k of TRAP_ORDER) {
+      const n = E.ammo[k].reserve;
+      if (n > 0) rows.push(`<div class="meat-row"><span>${TRAP_KINDS[k].name}s <small>× ${n}</small></span><span class="acts">${this.giveBtns('ammo', k, [['', 1]])}</span></div>`);
+    }
+    return rows.length ? '<h4>Weapons and traps</h4>' + rows.join('') : '';
   }
 
   forageRows() {
@@ -852,7 +872,7 @@ export class UI {
     chk('sb-ammo', 'infiniteAmmo'); chk('sb-observer', 'observerMode'); chk('sb-reveal', 'revealAnimals');
     chk('sb-survival', 'survival'); chk('sb-poachers', 'poachers');
     $('btn-heal').addEventListener('click', () => { const S = G.survival; S.health = 100; S.food = 100; S.rest = 100; S.sick = 0; this.toast('Health, food and rest restored', 'good'); });
-    $('btn-refill').addEventListener('click', () => { const a = G.equipment.ammo; a.rifle.mag = 5; a.rifle.reserve = 30; a.shotgun.mag = 5; a.shotgun.reserve = 30; a.pistol.mag = 6; a.pistol.reserve = 36; a.bow.reserve = 24; a.bait.reserve = 6; this.toast('All ammunition, arrows and bait refilled', 'good'); });
+    $('btn-refill').addEventListener('click', () => { const a = G.equipment.ammo; a.rifle.mag = 5; a.rifle.reserve = 30; a.shotgun.mag = 5; a.shotgun.reserve = 30; a.pistol.mag = 6; a.pistol.reserve = 36; a.bow.reserve = 24; a.bait.reserve = 6; a.trapS.reserve = 6; a.trapM.reserve = 4; a.trapL.reserve = 3; this.toast('All ammunition, arrows, bait and traps refilled', 'good'); });
     $('btn-unlock').addEventListener('click', () => { SPECIES_ORDER.forEach((s) => G.discovered.add(s)); saveProgress(); this.toast('All Field Guide entries unlocked', 'good'); });
     $('tele-list').innerHTML = LOCATIONS.map((l, i) => `<button class="btn small" data-tele="${i}">${l.name}<span>${l.desc}</span></button>`).join('');
     $('tele-list').addEventListener('click', (e) => {
@@ -909,7 +929,7 @@ export class UI {
     const ov = $('map-overlay');
     ov.innerHTML = LOCATIONS.map((l, i) => `<div class="map-loc" data-tele="${i}" style="left:${((l.x + HALF) / WORLD_SIZE) * 100}%;top:${((l.z + HALF) / WORLD_SIZE) * 100}%">${l.name}</div>`).join('')
       + this.mapPoiHtml()
-      + '<div id="map-drops"></div><div id="map-mates"></div><div class="map-player" id="map-player"></div><div id="map-animals"></div>';
+      + '<div id="map-traps"></div><div id="map-drops"></div><div id="map-mates"></div><div class="map-player" id="map-player"></div><div id="map-animals"></div>';
     ov.onclick = (e) => { const b = e.target.closest('[data-tele]'); if (!b) return; if (G.mode === 'survival') { this.toast('No fast travel in survival mode — you have to walk.', 'warn'); return; } this.teleport(LOCATIONS[+b.dataset.tele]); };
   }
 
@@ -922,6 +942,11 @@ export class UI {
     p.style.transform = `rotate(${yawToBearing(P.yaw)}deg)`;
     const md = $('map-drops');
     if (md) md.innerHTML = G.airdrops ? [...G.airdrops.drops.values()].map((d) => `<div class="map-airdrop" style="left:${((d.x + HALF) / WORLD_SIZE) * 100}%;top:${((d.z + HALF) / WORLD_SIZE) * 100}%"><span>Supply drop</span></div>`).join('') : '';
+    const mt = $('map-traps');
+    if (mt) {
+      const label = { set: 'set', sprung: 'sprung', caught: 'caught!' };
+      mt.innerHTML = G.traps ? [...G.traps.traps.values()].filter((t) => G.traps.ours(t)).map((t) => `<div class="map-trap ${t.state}" style="left:${((t.x + HALF) / WORLD_SIZE) * 100}%;top:${((t.z + HALF) / WORLD_SIZE) * 100}%"><span>${TRAP_KINDS[t.kind].size} trap · ${label[t.state]}</span></div>`).join('') : '';
+    }
     const mm = $('map-mates');
     if (mm) mm.innerHTML = G.net ? G.net.list.filter((q) => q.mate && q.seen).map((q) => `<div class="map-mate${q.dead ? ' dead' : ''}" style="left:${((q.pos.x + HALF) / WORLD_SIZE) * 100}%;top:${((q.pos.z + HALF) / WORLD_SIZE) * 100}%"><span>${q.name.replace(/</g, '&lt;')}</span></div>`).join('') : '';
     const ab = $('map-animals');
@@ -1120,7 +1145,7 @@ export class UI {
     ];
     const trophy = this.trophyFor(a);
     if (trophy) rows.splice(4, 0, trophy);
-    if (a.harvest) rows.push(['Shot placement', a.harvest.clean ? 'Heart / lungs — clean' : 'Body']);
+    if (a.harvest) rows.push(a.harvest.weapon === 'trap' ? ['Taken with', `${TRAP_KINDS[a.harvest.trap]?.name || 'A trap'}`] : ['Shot placement', a.harvest.clean ? 'Heart / lungs — clean' : 'Body']);
     $('in-grid').innerHTML = rows.map(([l, v]) => `<div><label>${l}</label>${v}</div>`).join('');
     $('in-notes').innerHTML = (sp.inspect || []).map((t) => `<li>${t}</li>`).join('');
     $('in-anat').textContent = sp.anatomy.notes;
@@ -1396,6 +1421,7 @@ export class UI {
     } else if (it.ammo) {
       eq.ammo[it.ammo].reserve += it.count;
       if (it.ammo === 'bait') eq.owned.bait = true;
+      if (it.ammo.startsWith('trap')) eq.owned.trap = true;
       this.toast(`+${it.count} ${WEAPONS[it.ammo].ammo}.`, 'good');
     } else if (id === 'cooked') { S.cooked.Venison = (S.cooked.Venison || 0) + PORTION_KG; this.toast('Bought 0.5 kg of cooked venison.', 'good'); }
     else { S.items[id] = (S.items[id] || 0) + 1; this.toast(`Bought: ${it.name}.`, 'good'); }

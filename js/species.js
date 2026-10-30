@@ -565,6 +565,44 @@ Object.assign(SPECIES, {
       foot: 'Cats are digitigrade and keep their claws retracted while walking; dense fur spreads the lynx\'s weight on snow.' },
   },
 
+  beaver: {
+    id: 'beaver',
+    name: 'North American Beaver',
+    sci: 'Castor canadensis',
+    family: 'Castoridae (beaver family)',
+    status: 'Least Concern (IUCN)',
+    habitat: 'Streams, rivers, ponds and lake edges with willow, aspen and alder across most of North America.',
+    diet: 'Herbivore. Bark, twigs and leaves of willow, aspen and birch; water plants in summer.',
+    size: 'Body 74–90 cm + flat tail 25–30 cm',
+    weight: '11–32 kg',
+    lifespan: 'About 10 years in the wild; up to ~24',
+    speed: 'Slow and clumsy on land; swims at about 8 km/h and can stay under for 15 minutes',
+    activity: 'Mostly nocturnal and crepuscular',
+    facts: [
+      'Beavers are the largest rodents in North America; their orange front teeth never stop growing.',
+      'They build dams of sticks and mud that turn streams into ponds, creating wetlands for many other species.',
+      'A slap of the broad, scaly tail on the water warns the whole family of danger.',
+      'Transparent eyelids work like swimming goggles, and the ears and nose close underwater.',
+      'Their lodge has underwater entrances and a dry chamber above the waterline.',
+    ],
+    tracks: 'Big webbed hind prints up to 15 cm long, often partly wiped out by the dragging tail; worn slides lead from the bank into the water.',
+    model: {
+      bodyLen: 0.62, bodyH: 0.32, bodyW: 0.34, shoulderH: 0.26, legR: 0.03, foot: 'paw', plantigrade: true,
+      neckLen: 0.05, neckR: 0.1, neckAngle: 0.15, headLen: 0.15, headH: 0.11, headW: 0.13,
+      snoutLen: 0.05, snoutR: 0.035, earLen: 0.02, earW: 0.025, earAngle: 0.5, earRound: true,
+      tailLen: 0.3, tailR: 0.08, tailType: 'paddle',
+      colors: { coat: 0x5a3a22, belly: 0x6e4a30, legs: 0x2e2018, head: 0x5e3e26, muzzle: 0x4a3020, nose: 0x141010, ear: 0x3a2618, tail: 0x26201c, tailUnder: 0x2e2620, dorsal: 0x4a2e1a },
+    },
+    behavior: {
+      walk: 0.55, trot: 1.3, run: 3.2, turnRate: 3.5, sight: 30, fov: 260, hearing: 90, smell: 120,
+      panic: 14, herd: [1, 2], timid: 1.1, activity: 'nocturnal', prey: [], predator: false,
+      stride: 0.22, print: 'raccoon', printSize: 0.12, call: null, fears: ['wolf', 'coyote', 'bear', 'cougar', 'lynx'],
+    },
+    anatomy: { ruminant: false, ribs: 14, ribsApprox: true,
+      notes: 'A rodent: four ever-growing incisors with iron-hardened orange enamel and a gap behind them, so it can gnaw with its lips closed behind the teeth. The gut ferments wood fibre with help from microbes.',
+      foot: 'Plantigrade. The hind feet are large and fully webbed for swimming; the second hind toe has a split "grooming claw".' },
+  },
+
   badger: {
     id: 'badger',
     name: 'American Badger',
@@ -638,6 +676,8 @@ const EXTRAS = {
     inspect: ['The horn sheath is shed each year; the bony core underneath stays.', 'White bands cross the throat and the rump flares white when alarmed.', 'There are no dewclaws on the legs.'] },
   lynx: { sex: ['Male', 'Female'], stats: { wM: [9, 15], wF: [8, 12], ageMax: 12, ageMethod: 'tooth wear' }, trophy: null,
     inspect: ['Huge, fur-covered paws work like snowshoes.', 'Black ear tufts, a facial ruff and a fully black tail tip.', 'Hind legs are longer than the forelegs.'] },
+  beaver: { sex: ['Male', 'Female'], stats: { wM: [12, 30], wF: [11, 28], ageMax: 12, ageMethod: 'tooth roots and skull size' }, trophy: null,
+    inspect: ['Bright orange front teeth: iron in the enamel makes them harder.', 'The flat, scaly tail is a rudder in the water and a fat store for winter.', 'Webbed hind feet, small clawed front paws for carrying mud and sticks.'] },
   badger: { sex: ['Boar', 'Sow'], stats: { wM: [7, 11], wF: [5, 9], ageMax: 9, ageMethod: 'tooth wear' }, trophy: null,
     inspect: ['Front claws up to 5 cm long for digging.', 'A white stripe runs from the nose over the crown.', 'Loose skin lets it twist inside burrows.'] },
 };
@@ -649,11 +689,11 @@ SPECIES.wolf.behavior.strike = 24;
 SPECIES.fox.behavior.strike = 7;
 SPECIES.fox.behavior.fears = ['wolf', 'coyote', 'cougar', 'lynx'];
 
-export const MAMMAL_ORDER = ['deer', 'elk', 'moose', 'pronghorn', 'bighorn', 'bison', 'boar', 'bear', 'wolf', 'coyote', 'fox', 'cougar', 'lynx', 'raccoon', 'badger', 'rabbit'];
+export const MAMMAL_ORDER = ['deer', 'elk', 'moose', 'pronghorn', 'bighorn', 'bison', 'boar', 'bear', 'wolf', 'coyote', 'fox', 'cougar', 'lynx', 'raccoon', 'beaver', 'badger', 'rabbit'];
 
 export const DEFAULT_POPULATION = {
   deer: 9, elk: 5, moose: 2, pronghorn: 5, bighorn: 5, bison: 6, boar: 5, bear: 2,
-  wolf: 4, coyote: 3, fox: 2, cougar: 1, lynx: 1, raccoon: 3, badger: 2, rabbit: 8,
+  wolf: 4, coyote: 3, fox: 2, cougar: 1, lynx: 1, raccoon: 3, beaver: 3, badger: 2, rabbit: 8,
 };
 
 // prey species -> animals it flees from (predators plus species it avoids)
@@ -671,7 +711,7 @@ for (const id in SPECIES) {
 // ---------------------------------------------------------------------------
 // Meat: which mammals are game animals (kind of meat when harvested)
 // ---------------------------------------------------------------------------
-const MEAT = { deer: 'Venison', elk: 'Elk meat', moose: 'Moose meat', pronghorn: 'Pronghorn meat', bighorn: 'Wild mutton', bison: 'Bison meat', boar: 'Wild boar meat', bear: 'Bear meat', rabbit: 'Rabbit meat' };
+const MEAT = { deer: 'Venison', elk: 'Elk meat', moose: 'Moose meat', pronghorn: 'Pronghorn meat', bighorn: 'Wild mutton', bison: 'Bison meat', boar: 'Wild boar meat', bear: 'Bear meat', rabbit: 'Rabbit meat', beaver: 'Beaver meat' };
 for (const id of MAMMAL_ORDER) { SPECIES[id].kind = 'mammal'; SPECIES[id].meat = MEAT[id] || null; }
 
 // ---------------------------------------------------------------------------

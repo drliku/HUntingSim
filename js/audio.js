@@ -162,6 +162,14 @@ export class AudioSystem {
 
   dryFire() { this.noiseBurst({ dur: 0.03, freq: 4000, q: 6, gain: 0.2 }); }
 
+  // a trap's jaws slamming shut: a sharp steel clack and a thump, heard a fair way off
+  trapSnap(pos) {
+    const sp = this.spatial(pos, 140);
+    if (!sp) return;
+    this.noiseBurst({ dur: 0.035, freq: 3600, q: 5, gain: 0.6, sp, when: sp.d / 340 });
+    this.noiseBurst({ dur: 0.1, freq: 650, q: 1.4, gain: 0.45, sp, when: sp.d / 340 + 0.012 });
+  }
+
   impact(pos, soft) {
     const sp = this.spatial(pos, 300);
     if (!sp) return;

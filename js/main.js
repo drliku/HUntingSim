@@ -21,6 +21,7 @@ import { loadLook, lookColor } from './avatar.js';
 import { loadHunter } from './hunterModel.js';
 import { Crates, AirDrops, OPEN_TIME } from './loot.js';
 import { Drops, describe } from './drops.js';
+import { Traps, TRAP_KINDS } from './traps.js';
 import { PostFX } from './post.js';
 import { Ambient } from './ambient.js';
 import { rollRarity, RARITY } from './rarity.js';
@@ -111,6 +112,8 @@ async function boot() {
   G.crates = crates;
   const drops = new Drops(scene);
   G.drops = drops;
+  const traps = new Traps(scene);
+  G.traps = traps;
   const airdrops = new AirDrops(scene, crates);
   G.airdrops = airdrops;
   G.mode = 'free';
@@ -236,7 +239,7 @@ async function boot() {
     G.difficulty = diff || null;
     G.cfg = mode === 'survival' ? DIFFICULTY[diff] : FREE_ROAM;
     if (mode === 'survival') {
-      equipment.owned = { rifle: false, shotgun: false, pistol: false, bow: false, knife: true, binoculars: false, bait: false, call: false };
+      equipment.owned = { rifle: false, shotgun: false, pistol: false, bow: false, knife: true, binoculars: false, bait: false, call: false, trap: false };
       equipment.item = 'knife'; equipment.nextItem = null;
       for (const k in equipment.ammo) { equipment.ammo[k].mag = 0; equipment.ammo[k].reserve = 0; }
       survival.money = G.cfg.money;
@@ -247,6 +250,7 @@ async function boot() {
     crates.clear();
     crates.fill();
     drops.clear();
+    traps.clear();
     airdrops.clear(); airdrops.timer = 150;
     ui.hideMainMenu();
     ui.closeMenus();
@@ -255,7 +259,7 @@ async function boot() {
     if (mode === 'survival') {
       ui.toast(`Survival (${G.cfg.label}): you have a knife and $${G.cfg.money}. The town east of the cabin has a gunsmith, a butcher who buys meat, and a general store. Ammunition is only sold there. Use the board inside your cabin to build upgrades.`, 'info');
     } else {
-      ui.toast('Welcome to the forest. A small group of deer was seen south-west of the cabin — try your binoculars (6, then hold right mouse). Keys 1–8 switch rifle, shotgun, revolver, bow, knife, binoculars, bait and call (or use the mouse wheel). Restock ammunition at the gunsmith in town.', 'info');
+      ui.toast('Welcome to the forest. A small group of deer was seen south-west of the cabin — try your binoculars (6, then hold right mouse). Keys 1–9 switch rifle, shotgun, revolver, bow, knife, binoculars, bait, call and traps (or use the mouse wheel). Restock ammunition at the gunsmith in town.', 'info');
     }
   }
   // PvP survival: survival rules (medium), no poachers — the other hunters are the danger
@@ -276,7 +280,7 @@ async function boot() {
   G.pvpRespawn = () => {
     Object.assign(survival, { health: 100, food: 75, rest: 80, sick: 0, poisons: [], raw: {}, cooked: {}, forage: {}, items: { beans: 0, bandage: 0, medkit: 0 }, wood: 0, dead: false, cause: '', dizzy: 0 });
     survival.money = Math.max(survival.money, 40);
-    equipment.owned = { rifle: false, shotgun: false, pistol: false, bow: false, knife: true, binoculars: false, bait: false, call: false };
+    equipment.owned = { rifle: false, shotgun: false, pistol: false, bow: false, knife: true, binoculars: false, bait: false, call: false, trap: false };
     equipment.item = 'knife'; equipment.nextItem = null; equipment.reloadT = 0; equipment.draw = 0;
     for (const k in equipment.ammo) { equipment.ammo[k].mag = 0; equipment.ammo[k].reserve = 0; }
     equipment.resetRarity();
@@ -378,6 +382,13 @@ async function boot() {
         return;
       }
     }
+    const tp = traps.nearest(P.pos.x, P.pos.z, 1.7);
+    if (tp) {
+      const K = TRAP_KINDS[tp.kind], held = tp.state === 'caught' ? animals.byNid.get(tp.nid) : null;
+      interaction = held ? { kind: 'none', text: `A ${held.sp.name.toLowerCase()} is caught in the ${K.size} trap. Finish it with your knife or a shot — careful, it can still bite.` }
+        : { kind: 'trap', t: tp, text: `<kbd>E</kbd>Pick up the ${K.name.toLowerCase()}${tp.state === 'sprung' ? ' (sprung)' : ''}${traps.mine(tp) ? '' : (G.net ? ' — not yours' : '')}` };
+      return;
+    }
     for (const r of world.restSpots) {
       if (Math.hypot(P.pos.x - r.x, P.pos.z - r.z) < 1.9) {
         const tired = survival.rest < 40 ? ' — you are tired' : '';
@@ -475,6 +486,9 @@ async function boot() {
       ui.showSleep(interaction.r);
     } else if (interaction.kind === 'fire') {
       ui.showCampfire(interaction.fire);
+    } else if (interaction.kind === 'trap') {
+      traps.pickUp(interaction.t);
+      interactT = 0;
     } else if (interaction.kind === 'carcass') {
       ui.showInspect(interaction.a);
     } else if (interaction.kind === 'track') {
@@ -502,6 +516,7 @@ async function boot() {
     if (!G.net.isHost) { animals.netUpdate(dt); birds.netUpdate(dt); } else { animals.update(dt); birds.update(dt); }
     crates.update(dt);
     drops.update(dt);
+    traps.animate(dt);
     airdrops.update(dt, world.env.wind);
     survival.update(dt);
     world.updateStores(world.env.time, player.pos.x, player.pos.z);
@@ -620,6 +635,7 @@ async function boot() {
       poachers.update(dt);
       crates.update(dt);
       drops.update(dt);
+    traps.animate(dt);
       airdrops.update(dt, world.env.wind);
       G.net?.tick(dt);
       if (G.net) ui.updateBoard(input.isDown('Tab'));

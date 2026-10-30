@@ -468,6 +468,14 @@ function buildTail(m) {
       p.push(loft(curveRings([V(0, 0, 0), V(0, -tl * 0.5, -0.025), V(0, -tl, -0.04)], (t) => tr * (1.5 - 0.6 * t), 7), { seg: 7, color: () => c.tail }));
       p.push(ell(0, -tl, -0.04, tr * 2.4, tr * 4, tr * 2.4, c.dorsal, 8, 6));
       break;
+    case 'paddle': {
+      // beaver: a broad, flat, scaly paddle trailing behind on the ground
+      const pts = [V(0, 0, 0), V(0, -tl * 0.18, -tl * 0.35), V(0, -tl * 0.26, -tl * 0.75), V(0, -tl * 0.28, -tl)];
+      p.push(loft(curveRings(pts, (t) => [tr * (0.55 + 0.9 * Math.sin(Math.PI * Math.min(1, t * 0.95 + 0.08))), tr * 0.22], 10), {
+        seg: 12, color: (pt, u, s) => (s > 0.1 ? c.tailUnder : c.tail),
+      }));
+      break;
+    }
     case 'puff':
       p.push(ell(0, 0, -tr * 0.4, tr, tr, tr, c.tail, 10, 8));
       break;

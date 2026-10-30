@@ -99,7 +99,11 @@ export function giveToPack(c) {
   const w = Math.min(c.wood || 0, MAX_WOOD - S.wood);
   S.wood += w; left.wood = (c.wood || 0) - w;
   S.money += c.money || 0;
-  for (const k in c.ammo) if (E.ammo[k]) E.ammo[k].reserve += c.ammo[k];
+  for (const k in c.ammo) if (E.ammo[k]) {
+    E.ammo[k].reserve += c.ammo[k];
+    if (k === 'bait') E.owned.bait = true;
+    if (k.startsWith('trap')) E.owned.trap = true;
+  }
   for (const [g, t] of c.guns || []) {
     if (!E.owned[g]) { E.owned[g] = true; E.setRarity(g, t); }
     else if (t > E.tier(g)) { left.guns.push([g, E.tier(g)]); E.setRarity(g, t); } // swap: the worse one stays behind
@@ -119,7 +123,7 @@ function wholePack() {
     if (n > 0) c.ammo[g] = n;
     if (E.owned[g]) c.guns.push([g, E.tier(g)]);
   }
-  if (E.ammo.bait && E.ammo.bait.reserve > 0) c.ammo.bait = E.ammo.bait.reserve;
+  for (const k of ['bait', 'trapS', 'trapM', 'trapL']) if (E.ammo[k] && E.ammo[k].reserve > 0) c.ammo[k] = E.ammo[k].reserve;
   return c;
 }
 

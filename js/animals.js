@@ -10,11 +10,12 @@ import { PLAY_LIMIT, MEADOWS, riverDistance } from './terrain.js';
 export const S = {
   IDLE: 'idle', WANDER: 'wander', GRAZE: 'graze', REST: 'rest', DRINK: 'drink', ALERT: 'alert',
   FLEE: 'flee', HIDE: 'hide', FREEZE: 'freeze', STALK: 'stalk', CHASE: 'chase', CHARGE: 'charge', DOWN: 'down', ATTACK: 'attack',
+  TRAPPED: 'trapped',
 };
 
 export const STATE_LABEL = {
   idle: 'Standing', wander: 'Moving', graze: 'Feeding', rest: 'Bedded down', drink: 'Drinking', alert: 'Alert',
-  flee: 'Fleeing', hide: 'Hiding', freeze: 'Frozen still', stalk: 'Stalking', chase: 'Chasing', charge: 'Bluff charge', down: 'Down', attack: 'Attacking',
+  flee: 'Fleeing', hide: 'Hiding', freeze: 'Frozen still', stalk: 'Stalking', chase: 'Chasing', charge: 'Bluff charge', down: 'Down', attack: 'Attacking', trapped: 'Caught in a trap',
 };
 
 // Animals that may attack the player. 'hunt': predators that come for you; 'defend': animals
@@ -97,6 +98,7 @@ function habitat(id, x, z, T) {
     case 'bighorn': return clamp(ridge * 0.8 + smoothstep(14, 32, h) * 0.6 - f * 0.2, 0, 1);
     case 'lynx': return clamp(f * 0.6 + ridge * 0.4, 0, 1);
     case 'badger': return clamp((1 - f) * 0.8, 0, 1);
+    case 'beaver': return clamp(smoothstep(45, 4, rd) * 0.9 + f * 0.15, 0, 1);
     default: return 0.5;
   }
 }
@@ -157,6 +159,7 @@ class Animal {
     this.tagged = false; this.harvest = null; this.popupShown = false;
     this.skinned = false; this.meatTaken = false; this.wounded = false; this.knifeHits = 0;
     this.prey = null;
+    this.trapRef = null; this.trapKilled = false;
     const r = this.rig;
     r.root.scale.setScalar(this.scale);
     r.bodyPivot.position.set(0, 0, 0);
@@ -181,6 +184,8 @@ class Animal {
   get radius() { return this.sp.model.bodyW * 0.6 * this.scale; }
 
   setState(s, dur = Infinity) {
+    // nothing gets an animal out of a trap but death or pulling free (which lets go of the trap first)
+    if (this.state === S.TRAPPED && this.trapRef && s !== S.DOWN) return;
     this.state = s;
     this.stalking = false;
     this.stateT = 0;
@@ -190,6 +195,14 @@ class Animal {
   pickActivity() {
     const env = G.env, h = env.time, b = this.b;
     if (this.species === 'rabbit') this.thirst = 0; // cottontails get their water from food and dew
+    // the lure on a trap's pan draws animals of its size in: they walk straight over it
+    const trap = G.traps?.lureFor(this);
+    if (trap && Math.random() < 0.25) {
+      const a = Math.atan2(trap.x - this.pos.x, trap.z - this.pos.z);
+      this.target.x = trap.x + Math.sin(a) * 3; this.target.z = trap.z + Math.cos(a) * 3;
+      this.setState(S.WANDER, 120);
+      return;
+    }
     // bait piles draw herbivores in
     if (BAIT_EATERS.includes(this.species) && G.world.baits && G.world.baits.length) {
       const bt = G.world.nearestBait(this.pos.x, this.pos.z, 170);
@@ -267,7 +280,7 @@ class Animal {
 
   flee(tx, tz, propagate) {
     const b = this.b;
-    if (this.state === S.DOWN) return;
+    if (this.state === S.DOWN || this.state === S.TRAPPED) return;
     let a = Math.atan2(this.pos.x - tx, this.pos.z - tz) + (Math.random() - 0.5) * 0.8;
     // avoid fleeing straight off the map
     for (let i = 0; i < 6; i++) {
@@ -361,6 +374,7 @@ class Animal {
   // --- AI decision step (throttled) ---
   think(tdt) {
     if (this.state === S.DOWN) return;
+    if (this.state === S.TRAPPED) { this.trappedThink(tdt); return; }
     const b = this.b;
     this.perceivePlayer(tdt);
     this.perceivePredators();
@@ -454,6 +468,50 @@ class Animal {
       }
       default:
         this.calm(tdt);
+    }
+  }
+
+  // Held by a foothold trap
+  trap(t, hours) {
+    this.setState(S.TRAPPED);
+    this.trapRef = t;
+    this.speed = this.targetSpeed = 0;
+    // the caught foreleg is on the trap, so the body stands just behind it
+    const back = this.sp.model.bodyLen * 0.42 * this.scale;
+    this.pos.x = t.x - Math.sin(this.heading) * back; this.pos.z = t.z - Math.cos(this.heading) * back;
+    this.trapHeading = this.heading;
+    this.trapUntil = G.env.totalHours + hours * (this.species === 'bear' ? 0.5 : 0.8 + Math.random() * 0.4);
+    this.awareness = 1; this.atkCool = 1.5;
+    if (this.group) {
+      // the rest of the herd scatters; the leader's job passes on
+      this.m.alarm(this, t.x, t.z, 30);
+      if (this.group.leader === this) this.group.leader = this.group.members.find((o) => o !== this && o.active) || this;
+    }
+  }
+
+  trappedThink(tdt) {
+    this.perceivePlayer(tdt);
+    this.targetSpeed = 0;
+    const t = this.trapRef;
+    if (G.env.totalHours > this.trapUntil) {
+      // pulled free: off it goes, limping
+      this.trapRef = null;
+      this.wounded = true;
+      this.setState(S.IDLE, 1);
+      this.flee(t ? t.x : this.pos.x, t ? t.z : this.pos.z, false);
+      if (t) G.traps?.escaped(t, this);
+      return;
+    }
+    // a trapped predator, boar or bear still bites anything that comes within reach
+    const A = ATTACK[this.species], P = this.P || G.player;
+    this.atkCool = (this.atkCool || 0) - tdt;
+    if (A && this.playerDist < 2.3 && this.atkCool <= 0 && G.cfg && !G.sandbox.observerMode && !isDead(P) && !P.inBed) {
+      const dmg = (A.dmg[0] + Math.random() * (A.dmg[1] - A.dmg[0])) * G.cfg.predDmg * 0.8;
+      if (P === G.player) G.survival?.damage(dmg, this.pos, `Mauled by a trapped ${this.sp.name.toLowerCase()}`);
+      else G.net?.damage(P, dmg, `Mauled by a trapped ${this.sp.name.toLowerCase()}`, this.pos);
+      this.lunge = 0.45;
+      G.audio?.growl(this.pos, this.species);
+      this.atkCool = A.rate * 1.3;
     }
   }
 
@@ -604,6 +662,15 @@ class Animal {
     }
 
     if (this.state === S.DOWN) { this.updateDown(dt); this.syncTransform(); this.animate(dt, camDist); return; }
+    if (this.state === S.TRAPPED) {
+      // pinned by one leg: it twists from side to side but goes nowhere
+      this.speed = 0;
+      this.heading = dampAngle(this.heading, this.trapHeading + Math.sin(this.stateT * 0.8 + this.id) * 0.3, 3, dt);
+      this.pos.y = G.world.groundAt(this.pos.x, this.pos.z, this.pos.y + 0.3);
+      this.syncTransform();
+      this.animate(dt, camDist);
+      return;
+    }
 
     const turn = b.turnRate * (this.speed > b.trot ? 0.8 : 1.2);
     this.heading = dampAngle(this.heading, this.desired + this.avoid, turn, dt);
@@ -660,8 +727,8 @@ class Animal {
     }
     // The body stays for inspection until it is tagged, left far behind, or after a long time
     const P = (this.P || G.player).pos;
-    const far = Math.hypot(P.x - this.pos.x, P.z - this.pos.z) > 260;
-    if (!this.fadeAt && (this.tagged || far || t > this.runOff + 900)) this.fadeAt = t;
+    const far = !this.trapKilled && Math.hypot(P.x - this.pos.x, P.z - this.pos.z) > 260;
+    if (!this.fadeAt && (this.tagged || far || t > this.runOff + (this.trapKilled ? 3600 : 900))) this.fadeAt = t;
     if (this.fadeAt) {
       const fadeStart = this.fadeAt;
       if (!this.fadeMat) {
@@ -747,7 +814,7 @@ class Animal {
   }
 
   startAttack(announce) {
-    if (this.state === S.ATTACK || this.state === S.DOWN) return;
+    if (this.state === S.ATTACK || this.state === S.DOWN || this.state === S.TRAPPED) return;
     this.setState(S.ATTACK, 22 + Math.random() * 8);
     this.atkCool = 0.6;
     this.awareness = 1.5;
@@ -841,6 +908,7 @@ class Animal {
     }
     const sp = this.speed;
     const legs = r.legs;
+    if (st === S.TRAPPED) { this.animateTrapped(dt); return; }
     if (st === S.DOWN) {
       const c = this.stateT > this.runOff ? smoothstep(0, 0.9, this.stateT - this.runOff) : 0;
       for (let i = 0; i < 4; i++) { legs[i].rotation.x = damp(legs[i].rotation.x, (i < 2 ? -0.3 : 0.3) * c, 6, dt); r.knees[i].rotation.x = damp(r.knees[i].rotation.x, (i < 2 ? 0.5 : 0.35) * c, 6, dt); }
@@ -931,6 +999,33 @@ class Animal {
     this.tailAngle = damp(this.tailAngle, tailT, 6, dt);
     r.tailPivot.rotation.x = this.tailAngle;
     if (['bushy', 'thin', 'long', 'ringed'].includes(m.tailType)) r.tailPivot.rotation.y = Math.sin(this.stateT * 2 + this.id) * 0.15;
+  }
+
+  // Caught by a foreleg: the leg stretched out to the trap, haunches down and pulling back,
+  // thrashing in bursts and then standing still, panting
+  animateTrapped(dt) {
+    const r = this.rig, legs = r.legs, m = this.sp.model, t = this.stateT;
+    const panic = 0.45 + Math.min(1, this.awareness) * 0.55;
+    const burst = Math.max(0, Math.sin(t * 1.1 + this.id)) ** 2 * panic;
+    const jerk = Math.sin(t * 12 + this.id) * burst;
+    this.restAmt = 0;
+    legs[0].rotation.x = damp(legs[0].rotation.x, -0.6 - burst * 0.2, 10, dt);
+    r.knees[0].rotation.x = damp(r.knees[0].rotation.x, 0.04, 10, dt);
+    legs[1].rotation.x = Math.sin(t * 9 + 1) * 0.55 * burst - 0.15;
+    r.knees[1].rotation.x = Math.max(0, Math.cos(t * 9 + 1)) * 0.9 * burst + 0.1;
+    legs[2].rotation.x = -0.3 + jerk * 0.25; legs[3].rotation.x = -0.3 - jerk * 0.25;
+    r.knees[2].rotation.x = r.knees[3].rotation.x = 0.45;
+    r.bodyPivot.position.y = -m.shoulderH * (0.08 + burst * 0.04);
+    r.bodyPivot.rotation.x = 0.1 + jerk * 0.1;
+    r.bodyPivot.rotation.z = jerk * 0.12;
+    if (this.lunge > 0) { this.lunge -= dt; r.bodyPivot.rotation.x -= Math.sin((this.lunge / 0.45) * Math.PI) * 0.35; }
+    this.headPitch = damp(this.headPitch, 0.35 + jerk * 0.35, 8, dt);
+    this.headYaw = damp(this.headYaw, Math.sin(t * 6.5) * 0.8 * burst - 0.35 * (1 - burst), 6, dt);
+    r.setHead(this.headPitch, this.headYaw);
+    this.breathT += dt * (3 + burst * 4);
+    const br = Math.sin(this.breathT) * 0.03;
+    r.bones.spine.scale.set(1 + br * 0.8, 1 + br, 1);
+    r.tailPivot.rotation.x = damp(r.tailPivot.rotation.x, m.tailType === 'deer' ? 2 : -0.4, 6, dt);
   }
 
   animateGait(dt, sp) {
@@ -1131,7 +1226,7 @@ export class AnimalManager {
     const overcall = this.calls.length > 3;
     let came = 0;
     for (const a of this.list) {
-      if (a.state === S.DOWN || a.state === S.FLEE || a.state === S.ATTACK) continue;
+      if (a.state === S.DOWN || a.state === S.FLEE || a.state === S.ATTACK || a.state === S.TRAPPED) continue;
       const d = Math.hypot(a.pos.x - x, a.pos.z - z);
       if (d > 260) continue;
       if (overcall && d < 140 && curious.includes(a.species)) { a.awareness = Math.min(1.5, a.awareness + 0.6); continue; }
@@ -1151,7 +1246,7 @@ export class AnimalManager {
   // Loud sounds: gunshots alarm wildlife over long distances.
   soundEvent(x, z, radius, kind) {
     for (const a of this.list) {
-      if (a.state === S.DOWN) continue;
+      if (a.state === S.DOWN || a.state === S.TRAPPED) continue;
       if (a.state === S.ATTACK && Math.random() < 0.75) continue;
       const d = Math.hypot(a.pos.x - x, a.pos.z - z);
       if (d > radius) continue;
@@ -1294,6 +1389,7 @@ export class AnimalManager {
       a.update(dt, cd);
       this.cull(a, cd, viewDist);
     }
+    G.traps?.check();
     // Population maintenance
     this.popTimer -= dt;
     if (this.popTimer <= 0) {
@@ -1314,7 +1410,7 @@ export class AnimalManager {
           // remove the farthest one
           let far = null, fd = 0;
           for (const a of this.list) {
-            if (a.species !== id || a.state === S.DOWN) continue;
+            if (a.species !== id || a.state === S.DOWN || a.state === S.TRAPPED) continue;
             const d = Math.hypot(a.pos.x - cam.x, a.pos.z - cam.z);
             if (d > fd) { fd = d; far = a; }
           }

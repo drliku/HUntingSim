@@ -1,5 +1,5 @@
 // First-person equipment: rifle (scope), pump shotgun, revolver, recurve bow, hunting knife,
-// binoculars, corn bait and a game call. Ballistic hitscan for bullets and pellets, real
+// binoculars, corn bait, a game call and traps. Ballistic hitscan for bullets and pellets, real
 // projectiles for arrows, per-weapon ammunition, recoil and reload animations.
 import * as THREE from 'three';
 import { G, settings, saveProgress } from './state.js';
@@ -8,11 +8,12 @@ import { RARITY, rarityMap, recolor } from './rarity.js';
 import { colorize, mergeColored, xf, ellipsoid, cylinderBetween, loft, curveRings } from './geo.js';
 import { S } from './animals.js';
 import { SPECIES } from './species.js';
+import { TRAP_KINDS, TRAP_ORDER, closedTrapGeometry } from './traps.js';
 
 const GRAVITY = 9.81;
 
-// Order defines the number keys 1–8.
-export const ITEMS = ['rifle', 'shotgun', 'pistol', 'bow', 'knife', 'binoculars', 'bait', 'call'];
+// Order defines the number keys 1–9.
+export const ITEMS = ['rifle', 'shotgun', 'pistol', 'bow', 'knife', 'binoculars', 'bait', 'call', 'trap'];
 
 export const WEAPONS = {
   rifle:   { name: 'Bolt-action rifle · .308', short: 'Rifle', gun: true, magSize: 5, velocity: 820, hip: 0.03, ads: 0.0004, zoom: 4, cycle: 1.15, reload: 2.4, loud: 420, pellets: 1, power: 'rifle', ammo: '.308 cartridges' },
@@ -23,6 +24,11 @@ export const WEAPONS = {
   binoculars: { name: 'Binoculars · 4–12× rangefinder', short: 'Binoculars', zoom: 8 },
   bait:    { name: 'Deer corn bait · click to place', short: 'Bait', ammo: 'bags' },
   call:    { name: 'Grunt call · click to call', short: 'Call' },
+  trap:    { name: 'Traps · click to set · right-click to change size', short: 'Traps' },
+  // the three trap sizes are counted like ammunition (bought, carried, given and dropped the same way)
+  trapS:   { name: 'Small trap', short: 'Small trap', ammo: 'small traps' },
+  trapM:   { name: 'Medium trap', short: 'Medium trap', ammo: 'medium traps' },
+  trapL:   { name: 'Large trap', short: 'Large trap', ammo: 'large traps' },
 };
 
 function part(geo, color, x, y, z, rx = 0, ry = 0, rz = 0) { return colorize(xf(geo, x, y, z, rx, ry, rz), color); }
@@ -325,6 +331,16 @@ function buildBaitBag(hands = true) {
   return mergeColored(p);
 }
 
+function buildTrapInHand(kind) {
+  const s = { trapS: 0.42, trapM: 0.4, trapL: 0.2 }[kind];
+  const t = closedTrapGeometry(kind).clone();
+  t.scale(s, s, s);
+  t.rotateX(0.75);           // tipped up so you can see the jaws
+  t.translate(0, 0.02, 0.0);
+  const H = handAround({ c: v3(0, -0.03, 0.0), axis: v3(1, 0, 0), palm: v3(0, -1, 0.3), r: 0.03, wrap: 1, curl: 0.6 });
+  return mergeColored([t, ...H.parts, sleeveTo(H.wrist, v3(0.07, -0.2, 0.26))]);
+}
+
 function buildCall(hands = true) {
   const p = [];
   p.push(cylZ(0.014, 0.018, 0.06, -0.06, 0, 0x3a2a1c, 12));
@@ -349,6 +365,7 @@ export function thirdPersonGeometry(id) {
   else if (id === 'knife') g = buildKnife(false);
   else if (id === 'binoculars') g = buildBinoculars(false);
   else if (id === 'bait') g = buildBaitBag(false);
+  else if (id === 'trap') g = closedTrapGeometry('trapM').clone().rotateX(-1.2).translate(0, 0.02, 0.05);
   else g = buildCall(false);
   g.rotateY(Math.PI);
   const off = { rifle: [0, 0, 0.458], shotgun: [0, 0, 0.462], pistol: [0, 0.035, 0.065], knife: [0, 0, 0.02] }[id];
@@ -383,12 +400,14 @@ export class Equipment {
     this.slashT = 0;
     this.callT = 0;
     this.identifyTarget = null; this.identifyT = 0; this.scanT = 0; this.range = null; this.info = null;
-    this.owned = { rifle: true, shotgun: true, pistol: true, bow: true, knife: true, binoculars: true, bait: true, call: true };
+    this.owned = { rifle: true, shotgun: true, pistol: true, bow: true, knife: true, binoculars: true, bait: true, call: true, trap: true };
     // magazine + reserve per weapon; bow and bait use reserve only
     this.ammo = {
       rifle: { mag: 5, reserve: 10 }, shotgun: { mag: 5, reserve: 10 }, pistol: { mag: 6, reserve: 12 },
       bow: { mag: 0, reserve: 12 }, bait: { mag: 0, reserve: 4 },
+      trapS: { mag: 0, reserve: 3 }, trapM: { mag: 0, reserve: 2 }, trapL: { mag: 0, reserve: 1 },
     };
+    this.trapSize = 'trapS';
 
     this.vmScene = new THREE.Scene();
     this.vmCamera = new THREE.PerspectiveCamera(62, 1, 0.01, 10);
@@ -436,6 +455,10 @@ export class Equipment {
     this.models.binoculars = group(new THREE.Mesh(buildBinoculars(), mat));
     this.models.bait = group(new THREE.Mesh(buildBaitBag(), mat));
     this.models.call = group(new THREE.Mesh(buildCall(), mat));
+    // a trap in the hand, sprung shut for carrying: one model per size
+    this.trapModels = {};
+    this.models.trap = group();
+    for (const k of TRAP_ORDER) { this.trapModels[k] = new THREE.Mesh(buildTrapInHand(k), mat); this.models.trap.add(this.trapModels[k]); }
     this.rarity = { rifle: 0, shotgun: 0, pistol: 0, bow: 0 };
 
     this.hipPos = new THREE.Vector3(0.16, -0.18, -0.56);
@@ -480,7 +503,7 @@ export class Equipment {
   select(item) {
     if (item === this.item || this.reloadT > 0) return;
     if (!this.owned[item]) {
-      G.ui?.toast(`You do not own ${WEAPONS[item].short === 'Bait' ? 'any bait' : 'a ' + WEAPONS[item].short.toLowerCase()} yet. ${item === 'bait' || item === 'call' ? 'The general store sells it.' : 'Buy it at the gunsmith.'}`, 'warn');
+      G.ui?.toast(`You do not own ${item === 'bait' ? 'any bait' : item === 'trap' ? 'any traps' : 'a ' + WEAPONS[item].short.toLowerCase()} yet. ${item === 'bait' || item === 'call' || item === 'trap' ? 'The general store sells it.' : 'Buy it at the gunsmith.'}`, 'warn');
       return;
     }
     this.nextItem = item;
@@ -591,6 +614,10 @@ export class Equipment {
       if (this.item === 'knife' && input.leftPressed && this.slashT <= 0 && this.switchT === 0) { this.slashT = 0.45; this.slashHit = false; G.audio?.slash(); }
       if (this.item === 'bait' && input.leftPressed && this.switchT === 0) this.placeBait();
       if (this.item === 'call' && input.leftPressed && this.switchT === 0) this.useCall();
+      if (this.item === 'trap' && this.switchT === 0) {
+        if (input.leftPressed) this.placeTrap();
+        if (input.right && !this.rightWas) this.cycleTrapSize();
+      }
       if (input.wasPressed('KeyR')) this.reload();
     }
     if (this.slashT > 0) {
@@ -598,6 +625,7 @@ export class Equipment {
       if (!this.slashHit && this.slashT < 0.3) { this.slashHit = true; this.knifeStrike(); }
     }
     this.callT = Math.max(0, this.callT - dt);
+    this.rightWas = input.right;
 
     // weapon cycling and reloading
     if (this.cycleT > 0) {
@@ -644,6 +672,7 @@ export class Equipment {
     const a = smoothstep(0, 1, this.aim);
     const overlay = smoothstep(0.65, 0.95, this.aim);
     for (const k in this.models) this.models[k].visible = k === this.item && this.swimAmt < 0.95;
+    if (this.item === 'trap') for (const k of TRAP_ORDER) this.trapModels[k].visible = k === this.trapSize;
     if (this.item === 'rifle' || this.item === 'binoculars') if (overlay >= 0.98) this.models[this.item].visible = false;
 
     const m = this.models[this.item];
@@ -712,6 +741,10 @@ export class Equipment {
       case 'binoculars':
         m.position.set(lerp(0.05, 0, a) + bx, lerp(-0.26, -0.01, a) + by + idle - low, lerp(-0.38, -0.14, a));
         m.rotation.set(lerp(-0.5, 0, a), 0, 0);
+        break;
+      case 'trap':
+        m.position.set(0.07 + bx, -0.15 + by + idle - low, -0.3);
+        m.rotation.set(-0.1, 0.25, -0.05);
         break;
       default: {
         const blow = this.item === 'call' ? Math.max(0, this.callT - 5.2) : 0;
@@ -994,6 +1027,27 @@ export class Equipment {
     G.world.placeBait(x, z);
     G.net?.bait(x, z);
     G.ui.toast('Bait placed. Deer, elk, boar, bison and bears nearby may come to feed over the next hours. Watch it from a distance — downwind.', 'good');
+  }
+
+  // ---------- traps ----------
+  placeTrap() {
+    const K = TRAP_KINDS[this.trapSize];
+    const why = G.traps.place(this.trapSize);
+    if (why) { G.ui.toast(why, 'warn'); return; }
+    if (!G.trapTipShown) {
+      G.trapTipShown = true;
+      G.ui.toast(`${K.name} set. Its lure draws in ${K.species.map((s) => SPECIES[s].name.toLowerCase() + 's').join(', ')} from up to ${K.lure} m around. Leave the area: animals won't come while you stand next to it. Your traps are on the map (M).`, 'good');
+    } else G.ui.toast(`${K.name} set (${this.ammo[this.trapSize].reserve} left).`, 'info');
+  }
+
+  cycleTrapSize() {
+    // step to the next size you have any of (or just the next size, if you have none at all)
+    const have = TRAP_ORDER.filter((k) => this.ammo[k].reserve > 0);
+    const list = have.length ? have : TRAP_ORDER;
+    const i = list.indexOf(this.trapSize);
+    this.trapSize = list[(i + 1) % list.length];
+    const K = TRAP_KINDS[this.trapSize];
+    G.ui.toast(`${K.name} (${this.ammo[this.trapSize].reserve}): ${K.kills ? 'kills' : 'holds'} ${K.species.map((s) => SPECIES[s].name.toLowerCase() + 's').join(', ')}.`, 'info');
   }
 
   useCall() {

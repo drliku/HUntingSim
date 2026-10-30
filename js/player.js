@@ -45,10 +45,21 @@ export class Input {
     document.addEventListener('mousedown', (e) => {
       if (!this.locked || G.chatOpen) return;
       // free-cursor mode: the cursor may rest on a HUD panel; only real controls keep the click for themselves
+      if (e.button === 2) { this.right = true; return; } // the scope button counts anywhere (nothing on the HUD uses it)
       if (!document.pointerLockElement && e.target !== canvas && e.target.closest && e.target.closest('button, a, input, select, textarea, label')) return;
       if (e.button === 0) { this.left = true; this.leftPressed = true; }
-      if (e.button === 2) this.right = true;
     });
+    // Browsers don't always send a button's own down/up event: pressing right while left is held only
+    // sends a pointer move, and a button held through a pause/resume never sends one again. Every pointer
+    // event carries which buttons are actually down, so keep the scope button in sync with that.
+    const sync = (e) => {
+      if (!this.locked || G.chatOpen || typeof e.buttons !== 'number') return;
+      this.right = (e.buttons & 2) !== 0;
+      if (!(e.buttons & 1)) this.left = false; // only ever release left here; pressing it must fire through mousedown
+    };
+    document.addEventListener('pointermove', sync);
+    document.addEventListener('pointerdown', sync);
+    document.addEventListener('pointerup', sync);
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.left = false;
       if (e.button === 2) this.right = false;

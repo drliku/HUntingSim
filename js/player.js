@@ -22,6 +22,7 @@ export class Input {
     this.wheel = 0;
     this.locked = false;
     this.onLockChange = null;
+    this.exitAt = -1e9; // when the mouse was last released (Chrome won't re-capture it for a moment after Esc)
 
     window.addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
@@ -43,7 +44,8 @@ export class Input {
     });
     document.addEventListener('mousedown', (e) => {
       if (!this.locked) return;
-      if (!document.pointerLockElement && e.target !== canvas && e.target.closest && e.target.closest('button, a, input, select, .menu, .panel')) return;
+      // free-cursor mode: the cursor may rest on a HUD panel; only real controls keep the click for themselves
+      if (!document.pointerLockElement && e.target !== canvas && e.target.closest && e.target.closest('button, a, input, select, textarea, label')) return;
       if (e.button === 0) { this.left = true; this.leftPressed = true; }
       if (e.button === 2) this.right = true;
     });
@@ -51,15 +53,21 @@ export class Input {
       if (e.button === 0) this.left = false;
       if (e.button === 2) this.right = false;
     });
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // no browser right-click menu over the game: it would swallow the scope button's release
+    window.addEventListener('contextmenu', (e) => { if (this.locked || e.target === canvas) e.preventDefault(); });
     window.addEventListener('wheel', (e) => { if (this.locked) this.wheel += Math.sign(e.deltaY); }, { passive: true });
     document.addEventListener('pointerlockerror', () => {
       if (this.promiseLock) return; // counted by the promise rejection instead
+      if (performance.now() - this.exitAt < 2500) return; // just the cooldown after Esc, not a real refusal
       this.refusals = (this.refusals || 0) + 1;
       if (this.refusals >= 2 && !this.fallback) { this.fallback = true; this.locked = true; if (this.onFallback) this.onFallback(); if (this.onLockChange) this.onLockChange(true); }
     });
     document.addEventListener('pointerlockchange', () => {
-      this.locked = document.pointerLockElement === canvas;
+      const captured = document.pointerLockElement === canvas;
+      // mouse capture works after all: back to normal (out of free-cursor mode), refusals forgotten
+      if (captured) { this.refusals = 0; this.fallback = false; }
+      else if (this.locked) this.exitAt = performance.now();
+      this.locked = captured;
       if (!this.locked) { this.left = this.right = false; this.keys.clear(); }
       if (this.onLockChange) this.onLockChange(this.locked);
     });
@@ -70,6 +78,9 @@ export class Input {
     // Some embedded frames refuse pointer lock entirely; after repeated refusals,
     // switch to free-cursor mode where plain mouse movement turns the view.
     const refused = () => {
+      // Chrome refuses to re-capture the mouse for about a second after Esc: that's not a sign capture is
+      // unavailable, so don't count it toward free-cursor mode (the click-to-resume prompt appears instead)
+      if (performance.now() - this.exitAt < 2500) return;
       this.refusals = (this.refusals || 0) + 1;
       if (this.refusals >= 2 && !document.pointerLockElement) {
         this.fallback = true;

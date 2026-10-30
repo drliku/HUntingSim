@@ -218,7 +218,15 @@ export class HunterAvatar {
 
     const R = this.root, B = this.bones;
     this.locomotion(dt, s, pr);
-    R.rotation.x = pr * Math.PI / 2;
+    // prone tips the body forward onto its front; asleep tips it back onto the bed
+    this.sleepAmt = (this.sleepAmt || 0) + ((s.sleep ? 1 : 0) - (this.sleepAmt || 0)) * Math.min(1, dt * 4);
+    // swimming: in the water at all (swimAmt), and how much you're stroking forward rather than treading (swimMove)
+    const inWater = s.swimming && !s.dead;
+    this.swimAmt = (this.swimAmt || 0) + ((inWater ? 1 : 0) - (this.swimAmt || 0)) * Math.min(1, dt * 4);
+    const stroking = inWater && Math.hypot(s.vx || 0, s.vz || 0) > 0.5;
+    this.swimMove = (this.swimMove || 0) + ((stroking ? 1 : 0) - (this.swimMove || 0)) * Math.min(1, dt * 3);
+    this.swimPh = (this.swimPh || 0) + dt * (1.6 + this.swimMove * 1.2);
+    R.rotation.x = pr * Math.PI / 2 - this.sleepAmt * Math.PI / 2 + this.swimMove * this.swimAmt * 1.25;
     R.updateWorldMatrix(true, true);
     // jogging or running sideways: the legs turn toward the movement, the chest stays on target
     if (Math.abs(this.hipYaw) > 0.01) {
@@ -226,6 +234,17 @@ export class HunterAvatar {
       turn(B.Bone_001, up, this.hipYaw);
       turn(B.Bone_005, up, -this.hipYaw * 0.45); turn(B.Bone_004, up, -this.hipYaw * 0.3); turn(B.Bone_002, up, -this.hipYaw * 0.25);
     }
+    // sitting (the rocking chair): hips down onto the seat, thighs forward, shins hanging, hands in the lap
+    this.sitAmt = (this.sitAmt || 0) + ((s.sit ? 1 : 0) - (this.sitAmt || 0)) * Math.min(1, dt * 6);
+    this.model.position.y = -0.47 * this.sitAmt;
+    if (this.sitAmt > 0.001) {
+      const st = this.sitAmt, rt = _v3.set(1, 0, 0).transformDirection(R.matrixWorld);
+      for (const L of this.legs) { turn(L.thigh, rt, -1.45 * st); turn(L.shin, rt, 1.5 * st); }
+      for (const arm of this.arms) { turn(arm.upper, rt, -0.35 * st); turn(arm.fore, rt, -0.9 * st); }
+      turn(B.Bone_002, rt, -0.12 * st); // leaning back a little
+    }
+    // asleep: slow breathing lifts the chest
+    if (s.sleep) turn(B.Bone_002, _v3.set(1, 0, 0).transformDirection(R.matrixWorld), Math.sin(this.idleT * 1.4) * 0.025);
     // lying down: legs and back straighten out, and crawl when moving
     if (pr > 0.001) {
       for (const b of this.legBones) b.quaternion.slerp(this.rest.get(b), pr);
@@ -247,7 +266,7 @@ export class HunterAvatar {
 
     // ---- weapon: carry pose blended with the aim pose, then mirrored into the right hand ----
     const P = POSE[this.item], a = Math.max(this.aimAmt, pr);
-    this.weapon.visible = !s.swimming && !s.dead && this.item !== 'none';
+    this.weapon.visible = !s.swimming && !s.dead && !s.sleep && !s.sit && this.item !== 'none';
     // anchor everything to where the shoulders actually are (crouching, leaning, running bob), in the root's frame
     const sh = this.sh || (this.sh = new THREE.Vector3());
     B.Bone_022.getWorldPosition(_v0); B.Bone_027.getWorldPosition(_v1);
@@ -281,6 +300,9 @@ export class HunterAvatar {
     const fl = this.items[this.item] && this.items[this.item].flash;
     if (fl) { fl.visible = this.flashT > 0; this.flashT -= dt; }
 
+    // ---- swimming: front crawl when moving, treading water when still ----
+    if (this.swimAmt > 0.01) { this.swim(R, sh, this.swimAmt, this.swimMove); return; }
+
     // ---- hands reach for the grips ----
     if (!this.weapon.visible) return;
     for (const arm of this.arms) {
@@ -307,6 +329,37 @@ export class HunterAvatar {
       arm.finger.getWorldPosition(_E);
       swing(arm.hand, _E, _v1.copy(_W).addScaledVector(fd, _E.distanceTo(_W)), w);
     }
+  }
+
+  // Arms and legs in the water. Everything is in the body's own frame (the root's tilt lays it
+  // forward when stroking): +y runs up the body, +z out of the chest, +x to the character's left.
+  swim(R, sh, w, mv) {
+    const B = this.bones, ph = this.swimPh;
+    const rt = _v3.set(1, 0, 0).transformDirection(R.matrixWorld);
+    for (const arm of this.arms) {
+      const a = ph + (arm.side > 0 ? Math.PI : 0);
+      // treading: hands scull in flat circles in front of the chest, just under the surface
+      _T.set(arm.side * (0.34 + Math.cos(a) * 0.1), sh.y - 0.28, 0.3 + Math.sin(a) * 0.1);
+      if (mv > 0.01) {
+        // front crawl: reach far ahead, pull down under the chest to the hip, recover over the water
+        const c = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2), pull = c < Math.PI;
+        const k = pull ? c / Math.PI : (c - Math.PI) / Math.PI;
+        const y = pull ? sh.y + 0.62 - k * 1.15 : sh.y - 0.53 + k * 1.15;
+        const z = pull ? 0.22 + Math.sin(k * Math.PI) * 0.28 : -0.08 - Math.sin(k * Math.PI) * 0.32;
+        _T.lerp(_E.set(arm.side * 0.24, y, z), mv);
+      }
+      _T.applyMatrix4(R.matrixWorld);
+      _P.set(arm.side * 0.7, sh.y - 0.2 + mv * 0.3, -0.15 - mv * 0.3).applyMatrix4(R.matrixWorld);
+      this.reach(arm, _T, _P, w);
+    }
+    // legs: slow cycling when treading, a quick flutter kick when stroking
+    for (const L of this.legs) {
+      const a = ph * (mv > 0.5 ? 2.6 : 1) + (L.side > 0 ? 0 : Math.PI);
+      turn(L.thigh, rt, (Math.sin(a) * (0.35 - mv * 0.15) - 0.15 * (1 - mv)) * w);
+      turn(L.shin, rt, (0.35 + Math.max(0, Math.cos(a)) * (0.5 - mv * 0.3)) * w);
+    }
+    // stroking face-down: lift the head to look ahead
+    turn(B.Bone_017, rt, -1.05 * mv * w);
   }
 
   // Pick and blend the motion clips for this frame, then pose the skeleton with them.
@@ -357,8 +410,11 @@ export class HunterAvatar {
     this.crawlAmt = pr > 0.5 ? Math.min(1, speed / 0.5) : 0;
     this.crawl += dt * speed * 5;
     this.deadT = s.dead ? (this.deadT || 0) + dt : 0;
+    // asleep in bed: the relaxed standing pose, tipped flat onto the back (see update); sitting: folded below
+    if (s.sleep) { T.idle = 1; s = { ...s, crouch: false, prone: false }; }
     // dying: the knees buckle first, then he goes over onto his back
-    if (s.dead) { if (this.deadT < 0.28) T.crouchIdle = 1; else T.dead = 1; }
+    if (s.sleep) { /* set above */ } else if (s.sit) T.idle = 1;
+    else if (s.dead) { if (this.deadT < 0.28) T.crouchIdle = 1; else T.dead = 1; }
     else if (air) T.air = 1;
     else if (pr > 0.5 || s.swimming) T.idle = 1;
     else if (s.crouch) {

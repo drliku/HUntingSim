@@ -8,6 +8,7 @@ import { DEFAULT_LOOK, sanitizeLook, lookColor, loadLook } from './avatar.js';
 import { makeAvatar, hunterReady } from './hunterModel.js';
 import { giveToPack, describe, isEmpty } from './drops.js';
 import { BIRD_STATES } from './birds.js';
+import { WATER_LEVEL } from './terrain.js';
 
 // Replace Math.random with a seeded generator (so every player builds the same forest).
 // Returns a function that puts the real Math.random back.
@@ -130,7 +131,7 @@ class RemotePlayer {
     this.yaw = m.yaw; this.pitch = m.p || 0; this.aim = m.a || 0; this.draw = m.d || 0; this.tier = m.r || 0;
     this.crouch = !!m.c; this.prone = !!m.pr; this.sprint = !!m.sp; this.vx = m.vx; this.vz = m.vz; this.air = !!m.air; this.hidden = !!m.hd; this.item = m.it; this.hp = m.hp;
     this.dead = !!m.dead; this.moving = !!m.mv; this.visibility = m.vis; this.noise = m.no;
-    this.inBed = !!m.bed; this.inCabinSafe = !!m.safe; this.swimming = !!m.sw;
+    this.inBed = !!m.bed; this.bedKind = m.bed || 0; this.bedYaw = m.by || 0; this.inCabinSafe = !!m.safe; this.swimming = !!m.sw;
   }
 
   update(dt) {
@@ -138,12 +139,25 @@ class RemotePlayer {
     this.pos.lerp(this.target, Math.min(1, dt * 12));
     this.eye.set(this.pos.x, this.pos.y + (this.prone ? 0.42 : this.crouch ? 1.15 : 1.6), this.pos.z);
     const r = this.root;
-    r.visible = this.seen && !this.inBed; // the bed hides you under the covers
+    // in bed you lie on your back under your head's spot on the pillow; in the rocking chair you sit
+    // (the built-in avatar has no such poses, so it still hides under the covers)
+    r.visible = this.seen && (!this.inBed || this.avatar.isModel);
     r.position.copy(this.pos);
-    if (this.swimming) r.position.y -= 1.15;
+    const sleeping = this.inBed && this.bedKind === 1, sitting = this.inBed && this.bedKind === 2;
+    const bodyYaw = this.inBed ? this.bedYaw : this.yaw;
+    // asleep: the body is tipped back from the feet, so the feet go at the foot of the bed and the head lands on the pillow
+    if (sleeping) { r.position.x -= Math.sin(bodyYaw) * 1.56; r.position.z -= Math.cos(bodyYaw) * 1.56; r.position.y += 0.64; }
+    if (this.swimming) {
+      if (this.avatar.isModel) {
+        // treading: upright with head and shoulders out; stroking: laid out at the surface, body trailing behind the head
+        const sm = this.avatar.swimMove || 0;
+        r.position.y = WATER_LEVEL - 1.5 + sm * 1.1;
+        r.position.x += Math.sin(this.yaw) * 1.55 * sm; r.position.z += Math.cos(this.yaw) * 1.55 * sm;
+      } else r.position.y -= 1.15;
+    }
     if (this.dead && !this.avatar.isModel) r.position.y += 0.25; // the model falls onto its back by itself
-    r.rotation.y = this.yaw + Math.PI;
-    this.avatar.update(dt, { pitch: this.pitch, aim: this.aim, draw: this.draw, item: this.item, tier: this.tier, moving: this.moving, sprint: this.sprint, vx: this.vx, vz: this.vz, air: this.air, crouch: this.crouch, prone: this.prone, dead: this.dead, swimming: this.swimming });
+    r.rotation.y = bodyYaw + Math.PI;
+    this.avatar.update(dt, { sleep: sleeping, sit: sitting, pitch: this.inBed ? 0 : this.pitch, aim: this.aim, draw: this.draw, item: this.item, tier: this.tier, moving: this.moving, sprint: this.sprint, vx: this.vx, vz: this.vz, air: this.air, crouch: this.crouch, prone: this.prone, dead: this.dead, swimming: this.swimming });
     // lying down: the body stretches out behind the head instead of standing on the spot
     const pa = this.avatar.proneAmt;
     if (pa > 0.001) { r.position.x += Math.sin(this.yaw) * 1.5 * pa; r.position.z += Math.cos(this.yaw) * 1.5 * pa; r.position.y += 0.15 * pa; }
@@ -336,7 +350,7 @@ export class Net {
         t: 'me', x: r2(P.pos.x), y: r2(P.pos.y), z: r2(P.pos.z), yaw: r2(P.yaw), p: r2(P.pitch), c: P.crouch && !P.prone ? 1 : 0, pr: P.prone ? 1 : 0, sp: P.sprinting ? 1 : 0, vx: r2(P.vel.x), vz: r2(P.vel.z), air: !P.onGround && !P.swimming && !P.inWater ? 1 : 0, hd: P.hidden ? 1 : 0,
         a: Math.round(G.equipment.aim * 10) / 10, d: G.equipment.item === 'bow' ? Math.round((G.equipment.draw || 0) * 10) / 10 : 0, r: G.equipment.tier(G.equipment.item),
         it: G.equipment.item, hp: Math.round(S.health), dead: S.dead ? 1 : 0, mv: P.moving ? 1 : 0,
-        vis: r2(P.visibility || 0.5), no: r2(P.noise || 0), bed: P.inBed ? 1 : 0, safe: P.inCabinSafe ? 1 : 0, sw: P.swimming ? 1 : 0,
+        vis: r2(P.visibility || 0.5), no: r2(P.noise || 0), bed: P.inBed ? (P.inBed.spot.chair ? 2 : 1) : 0, by: P.inBed ? r2(P.inBed.yaw) : 0, safe: P.inCabinSafe ? 1 : 0, sw: P.swimming ? 1 : 0,
       });
     }
     if (!this.isHost) return;

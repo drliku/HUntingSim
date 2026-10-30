@@ -33,6 +33,8 @@ PvP needs the game's own server, so it does not work on the shared claude.ai pag
 
 How it plays: survival rules on medium with $120 and a knife, and no poachers — the other hunters are the danger. Everyone shares one forest: the same wildlife (ground animals and birds alike: the host's game runs them and streams them to everyone, and any player walking up to a flock makes it take off for all), time, weather, doors, campfires, wild food, bait and cabin upgrades. A bird shot by anyone comes down on every screen; only the shooter gets the harvest. Players wear coloured vests with name tags. A gunshot shows the shooter on everyone's minimap for a few seconds. Hits are scored by body part (head, body, legs) per weapon. When you die you respawn far from the others with a knife and $40; whoever killed you takes your money. Sleep does not skip time in PvP — you rest in real time, faster in bed. Hold **Tab** for the scoreboard.
 
+**Chat:** press **Y** to type a message (up to 140 characters); **Enter** sends it to everyone in the game, **Esc** cancels. Messages appear bottom left above your vitals, with each sender's name in their jacket colour (teammates in green), and fade after a few seconds.
+
 **Teams:** walk up to another hunter and press **E** to ask them to team up; they accept by walking up to you and pressing **E**. Teammates see each other anywhere on the map (a green marker with name and distance that shows through trees and walls, plus a green dot on the minimap and the map), and their weapons can't hurt each other. Press **E** next to a teammate to leave the team.
 
 **Sharing:** open your pack (**I**): every item has a **Give** button when a teammate is within 6 m (it goes straight into their pack) and a **Drop** button otherwise (it goes in a bag at your feet that anyone can pick up with **E**). You can hand over meat, wild food, supplies, firewood, money ($10 / $50 / all), spare ammunition and whole weapons, which keep their rarity and the rounds loaded in them. When you are killed, everything you carried falls in a bag where you died, so you or a teammate can go back for it (your killer still takes your money). Bags disappear after 15 minutes.
@@ -58,6 +60,7 @@ How it plays: survival rules on medium with $120 and a knife, and no poachers �
 | E | Inspect tracks or a harvest; open/close cabin doors; use the bed (relax or sleep); light and use campfires; climb the stand ladder |
 | Z (in bed) | Go to sleep |
 | Hold E (at a tree) | Chop the tree down for firewood |
+| Y (PvP) | Chat: type a message, Enter sends it to everyone, Esc cancels |
 | E (next to a player, PvP) | Team up / accept a team request / leave the team |
 | E (at a bag) | Pick up a dropped bag |
 | Hold E (at a supply drop) | Pry the supply drop open |

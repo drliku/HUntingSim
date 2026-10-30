@@ -1626,7 +1626,56 @@ export class UI {
     });
   }
 
-  showPvpHud(on) { $('pvp-hud').classList.toggle('hidden', !on); }
+  showPvpHud(on) { $('pvp-hud').classList.toggle('hidden', !on); $('chat').classList.toggle('hidden', !on); }
+
+  // ---------- PvP chat (Y) ----------
+  openChat() {
+    if (!G.net || this.chatOpen) return;
+    if (!this.chatBound) {
+      this.chatBound = true;
+      $('chat-input').addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); this.closeChat(true); } else if (e.key === 'Escape') { e.preventDefault(); this.closeChat(false); }
+      });
+      // Esc while the mouse is captured releases it (and pauses): drop the half-typed message
+      document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && this.chatOpen && !G.input.fallback) this.closeChat(false); });
+    }
+    this.chatOpen = true; G.chatOpen = true;
+    G.input.keys.clear(); G.input.left = G.input.right = false; // don't keep walking or aiming while typing
+    $('chat').classList.add('open');
+    const inp = $('chat-input');
+    inp.classList.remove('hidden');
+    inp.value = '';
+    inp.focus();
+  }
+
+  closeChat(send) {
+    if (!this.chatOpen) return;
+    const inp = $('chat-input');
+    const text = inp.value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 140);
+    if (send && text) {
+      const now = performance.now();
+      if (now - (this.chatSentAt || 0) < 700) this.chatLine(null, 'Slow down a little.', true);
+      else { this.chatSentAt = now; G.net.chat(text); this.chatLine({ name: G.net.name + ' (you)', color: '#d9a85b' }, text); }
+    }
+    inp.value = ''; inp.blur(); inp.classList.add('hidden');
+    $('chat').classList.remove('open');
+    this.chatOpen = false; G.chatOpen = false;
+    G.input.keys.clear();
+  }
+
+  // one line in the chat log: who (null for a system line) and what
+  chatLine(who, text, sys = false) {
+    const log = $('chat-log');
+    const el = document.createElement('div');
+    el.className = 'cl' + (sys ? ' sys' : '');
+    if (who) { const b = document.createElement('b'); b.textContent = who.name + ':'; b.style.color = who.color; el.appendChild(b); }
+    el.appendChild(document.createTextNode(text));
+    log.appendChild(el);
+    while (log.children.length > 8) log.firstChild.remove();
+    setTimeout(() => el.classList.add('faded'), 12000);
+    if (!sys) G.audio?.uiTick?.();
+  }
 
   updatePvpHud() {
     const n = G.net;

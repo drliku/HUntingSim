@@ -43,7 +43,7 @@ export class Input {
       this.dy += e.movementY || 0;
     });
     document.addEventListener('mousedown', (e) => {
-      if (!this.locked) return;
+      if (!this.locked || G.chatOpen) return;
       // free-cursor mode: the cursor may rest on a HUD panel; only real controls keep the click for themselves
       if (!document.pointerLockElement && e.target !== canvas && e.target.closest && e.target.closest('button, a, input, select, textarea, label')) return;
       if (e.button === 0) { this.left = true; this.leftPressed = true; }

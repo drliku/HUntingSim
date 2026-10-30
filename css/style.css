@@ -370,6 +370,15 @@ select option { background: #1a1d1b; }
 .sf-clock { font: 600 64px var(--num); letter-spacing: 3px; font-variant-numeric: tabular-nums; }
 
 /* ---------------- Survival ---------------- */
+/* PvP chat: bottom left, above the vitals; lines fade after a while unless the chat is open */
+#chat { position: absolute; left: 18px; bottom: 236px; width: 380px; max-width: calc(100vw - 36px); pointer-events: none; z-index: 6; }
+#chat-log { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+#chat-log .cl { font-size: 13px; line-height: 1.35; color: #f2eee6; text-shadow: 0 1px 3px rgba(0,0,0,.9); padding: 3px 8px; border-radius: 6px; background: rgba(10,12,10,.45); width: fit-content; max-width: 100%; overflow-wrap: anywhere; transition: opacity .8s; }
+#chat-log .cl b { font-weight: 700; margin-right: 6px; }
+#chat-log .cl.sys { color: #c9c3b6; font-style: italic; }
+#chat-log .cl.faded { opacity: 0; }
+#chat.open #chat-log .cl.faded { opacity: 0.85; }
+#chat-input { pointer-events: auto; width: 100%; box-sizing: border-box; font: 14px inherit; color: #f2eee6; background: rgba(10,12,10,.7); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; outline: none; }
 #vitals { position: absolute; left: 18px; bottom: 150px; padding: 10px 14px; width: 190px; font-size: 11px; }
 .vital { display: grid; grid-template-columns: 50px 1fr; align-items: center; gap: 8px; margin: 4px 0; color: var(--muted); }
 .vital .bar { height: 5px; background: rgba(255,255,255,.08); border-radius: 3px; overflow: hidden; }

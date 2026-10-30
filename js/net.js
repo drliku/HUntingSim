@@ -241,6 +241,7 @@ export class Net {
       }
       case 'me': if (from) from.apply(m); break;
       case 'look': if (from) from.setLook(m.look); break;
+      case 'chat': if (from && typeof m.text === 'string') G.ui.chatLine({ name: from.name, color: from.mate ? '#7dff9a' : '#' + lookColor('jacket', from.look.jacket).toString(16).padStart(6, '0') }, m.text.slice(0, 140)); break;
       case 'team': if (from) this.onTeam(m, from); break;
       case 'bag': if (m.a === 'set') G.drops.set(m.id, m.x, m.z, m.c, m.o); else G.drops.remove(m.id, false); break;
       case 'gift': this.onGift(m, from); break;
@@ -376,6 +377,7 @@ export class Net {
   }
 
   // ---------- events from this player's game ----------
+  chat(text) { this.send({ t: 'chat', text: String(text).slice(0, 140) }); }
   sendLook(to) { const m = { t: 'look', look: loadLook() }; if (to) m.to = to; this.send(m); }
   shot(item, loud) { const p = G.camera.position; this.send({ t: 'shot', x: r2(p.x), y: r2(p.y), z: r2(p.z), w: item, loud }); }
   noise(x, z, r, k) { if (!this.isHost) this.send({ t: 'noise', to: 'host', x: r2(x), z: r2(z), r, k }); }

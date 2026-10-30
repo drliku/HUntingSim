@@ -492,6 +492,7 @@ async function boot() {
     else if (input.wasPressed('KeyB') && !G.net) ui.toggleMenu('sandbox');
     else if (input.wasPressed('KeyM')) ui.toggleMenu('map');
     else if (input.wasPressed('KeyI')) ui.toggleMenu('pack');
+    else if (input.wasPressed('KeyY') && G.net && !G.menuOpen) ui.openChat();
     else if (input.wasPressed('Escape') && G.menuOpen && performance.now() - (G.menuOpenedAt || 0) > 400) ui.back();
   }
 
